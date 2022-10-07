@@ -2,4 +2,4 @@
 SLAM implementation with IMU integration written in Rust
 
 # References
-- design heavily defined by [ORB_SLAM2](https://github.com/raulmur/ORB_SLAM2)
+- design heavily defined by [ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3)
