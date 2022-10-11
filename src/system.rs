@@ -16,7 +16,7 @@ struct MapPoint {}
 #[derive(Default)]
 pub struct System {
     pub camera_intrinsics: (Matrix3<f64>, Matrix3<f64>),
-    /// ORB vocabulary used for place recognition and feature matching.
+    /// ORB vocabulary used for place recognition and feature matching using Visual Bag of Words (VBoW)
     //ORBVocabulary* mppubeVocabulary;
 
     /// KeyFrame database for place recognition (relocalization and loop detection).
@@ -96,12 +96,7 @@ impl System {
             },
         });
     }
-    fn activate_localization_mode(&mut self) {}
-    fn deactivate_localization_mode(&mut self) {}
-    fn map_changed(&self) -> bool {
-        todo!()
-    }
-    fn reset(&mut self) {}
+
     pub fn shutdown(self) {}
 }
 
@@ -118,12 +113,6 @@ pub fn get_camera_intrinsic(f: T, w: T, h: T) -> Matrix3<T> {
         0 as _,
         1 as _,
     )
-}
-
-type Measurements = u128;
-
-fn get_measurements() {
-    let measurements: Vec<(u8, u8)> = Vec::new();
 }
 
 fn compute_descriptor(keypoint: &KeyPoint) -> Descriptor {
