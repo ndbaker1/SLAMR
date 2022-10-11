@@ -1,23 +1,12 @@
-use crate::tracking::Tracking;
+use image::{ImageBuffer, Pixel};
 
-#[derive(Default)]
-pub enum InputSensor {
-    #[default]
-    Monocular = 1,
-    Stereo = 2,
-    Rgbd = 3,
-    IMUMonocular = 4,
-    IMUStereo = 5,
-    IMURgbd = 6,
-}
+use crate::tracking::Tracking;
 
 struct MapPoint {}
 struct KeyPoint {}
 
 #[derive(Default)]
 pub struct System {
-    pub sensor: InputSensor,
-
     /// ORB vocabulary used for place recognition and feature matching.
     //ORBVocabulary* mppubeVocabulary;
 
@@ -67,7 +56,12 @@ impl System {
         Self::default()
     }
 
-    pub fn track_monocular(&mut self, matrix: &[u8], timestamp: f64) {}
+    pub fn track_monocular<P: Pixel, C>(
+        &mut self,
+        image_buffer: &ImageBuffer<P, C>,
+        timestamp: f64,
+    ) {
+    }
     fn activate_localization_mode(&mut self) {}
     fn deactivate_localization_mode(&mut self) {}
     fn map_changed(&self) -> bool {
@@ -75,4 +69,10 @@ impl System {
     }
     fn reset(&mut self) {}
     pub fn shutdown(self) {}
+}
+
+type Measurements = u128;
+
+fn get_measurements() {
+    let measurements: Vec<(u8, u8)> = Vec::new();
 }

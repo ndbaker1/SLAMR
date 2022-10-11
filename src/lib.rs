@@ -1,29 +1,41 @@
 mod frame;
-mod loop_closing;
+mod loop_closure;
 mod system;
 mod tracking;
 
 #[cfg(test)]
 mod tests {
+    use std::{thread, time::Duration};
+
+    use image::{imageops::grayscale, GrayImage};
+
     use crate::system::System;
 
-    fn example_mono_execution() {
+    #[test]
+    fn on_system_execution() {
         let slam: System = todo!();
-        // Main loop
-        let im: _ = todo!();
+
+        //// process sensor 1 (imu)
+        //let (imu_sender, imu_receiver) = sync::mpsc::channel::<u8>();
+        //thread::spawn(move || loop {
+        //    imu_sender.send(1u8);
+        //});
+
+        //// process sensor 2 (camera)
+        //let (camera_sender, camera_receiver) = sync::mpsc::channel::<u8>();
+        //thread::spawn(move || loop {
+        //    camera_sender.send(2u8);
+        //});
+
         loop {
-            // Read image from file
-            im = todo!(); // cv::imread(vstrImageFilenames[ni],CV_LOAD_IMAGE_UNCHANGED);
-            let tframe = todo!(); // vTimestamps[ni];
+            // imu_receiver.try_recv();
+            // camera_receiver.try_recv();
 
-            if true {
-                //im.empty() {
-                println!("no further frames");
-                break;
-            }
+            //slam.track_monocular(&frame, 0.0);
 
-            // Pass the image to the SLAM system
-            slam.track_monocular(im, tframe);
+            thread::sleep(Duration::from_millis(10));
+
+            break;
         }
 
         // Stop system

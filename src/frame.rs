@@ -8,12 +8,21 @@ impl Frame {
     pub fn is_set(&self) -> bool {
         todo!()
     }
+
+    pub fn extract_features() {
+        todo!()
+    }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct KeyFrame {
-    pub imu_bias: Bias,
+    pub frame: Frame,
 }
 
 #[derive(Default, Clone)]
 pub struct Bias {}
+
+#[derive(Default)]
+pub struct KeyframeDatabase {
+    key_frames: Vec<KeyFrame>,
+}

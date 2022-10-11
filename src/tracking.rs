@@ -1,7 +1,4 @@
-use crate::{
-    frame::{Frame, KeyFrame},
-    system::InputSensor,
-};
+use crate::frame::{Frame, KeyFrame};
 
 /// Tracking states
 #[derive(Default)]
@@ -20,8 +17,6 @@ pub enum TrackingState {
 pub struct Tracking {
     pub tracking_state: TrackingState,
     pub last_tracking_state: TrackingState,
-
-    pub sensor: InputSensor,
 
     pub current_frame: Frame,
     pub last_frame: Frame,
@@ -44,12 +39,8 @@ impl Tracking {
             }
         }
 
-        if let (
-            InputSensor::IMUMonocular | InputSensor::IMUStereo | InputSensor::IMURgbd,
-            Some(last_key_frame),
-        ) = (&self.sensor, &self.last_key_frame)
-        {
-            self.current_frame.imu_bias = last_key_frame.imu_bias.clone();
+        if let Some(last_key_frame) = &self.last_key_frame {
+            self.current_frame.imu_bias = last_key_frame.frame.imu_bias.clone();
         }
 
         if matches!(
