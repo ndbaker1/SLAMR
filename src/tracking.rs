@@ -23,14 +23,10 @@ pub struct Tracking {
 
     pub initial_frame: Frame,
 
-    last_key_frame: Option<KeyFrame>,
+    pub last_key_frame: Option<KeyFrame>,
 }
 
 impl Tracking {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// main tracking function
     pub fn track(&mut self) {
         if matches!(self.tracking_state, TrackingState::NoImagesYet) {

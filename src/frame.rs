@@ -1,7 +1,17 @@
+pub struct KeyPoint {
+    pub x: u32,
+    pub y: u32,
+}
+
+pub type Descriptor = u32;
+
+pub type Feature = (KeyPoint, Descriptor);
+
 #[derive(Default)]
 pub struct Frame {
     pub timestamp: f64,
     pub imu_bias: Bias,
+    pub features: Vec<Feature>,
 }
 
 impl Frame {

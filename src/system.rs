@@ -1,12 +1,21 @@
-use image::{ImageBuffer, Pixel};
+use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
+use imageproc::{
+    corners::{corners_fast9, Corner},
+    drawing,
+};
+use nalgebra::Matrix3;
+use once_cell::sync::Lazy;
 
-use crate::tracking::Tracking;
+use crate::{
+    frame::{Descriptor, Feature, Frame, KeyFrame, KeyPoint},
+    tracking::Tracking,
+};
 
 struct MapPoint {}
-struct KeyPoint {}
 
 #[derive(Default)]
 pub struct System {
+    pub camera_intrinsics: (Matrix3<f64>, Matrix3<f64>),
     /// ORB vocabulary used for place recognition and feature matching.
     //ORBVocabulary* mppubeVocabulary;
 
@@ -19,36 +28,10 @@ pub struct System {
     /// Tracker. It receives a frame and computes the associated camera pose.
     /// It also decides when to insert a new keyframe, create some new MapPoints and
     /// performs relocalization if tracking fails.
-    mp_tracker: Tracking,
-
-    /// Local Mapper. It manages the local map and performs local bundle adjustment.
-    //LocalMapping* mpLocalMapper;
-
-    /// Loop Closer. It searches loops with every new keyframe. If there is a loop it performs
-    /// a pose graph optimization and full bundle adjustment (in a new thread) afterwards.
-    //LoopClosing* mpLoopCloser;
-
-    /// System threads: Local Mapping, Loop Closing, Viewer.
-    /// The Tracking thread "lives" in the main execution thread that creates the System object.
-    //std::thread* mptLocalMapping:
-    //std::thread* mptLoopClosing;
-    //std::thread* mptViewer;
-
-    /// Reset flag
-    //m_mutex_reset: Mutex<()>,
-    //mb_reset: bool,
-
-    /// Change mode flags
-    //m_mutex_mode: Mutex<()>,
-    //mb_activate_localization_mode: bool,
-    //mb_deactivate_localization_mode: bool,
-
-    /// Tracking state
-    m_tracking_state: u32,
-    m_tracked_map_points: Vec<MapPoint>,
-    m_tracked_key_points_un: Vec<KeyPoint>,
-    //m_mutex_state: Mutex<()>,
+    pub tracker: Tracking,
 }
+
+// TODO - Local Bundle Adjustment & Global Bundle Adjustment
 
 impl System {
     /// Create the Local Mapping and Loop Closing
@@ -56,11 +39,62 @@ impl System {
         Self::default()
     }
 
-    pub fn track_monocular<P: Pixel, C>(
+    pub fn track_monocular(
         &mut self,
-        image_buffer: &ImageBuffer<P, C>,
+        image_buffer: &mut ImageBuffer<Rgba<u8>, &mut [u8]>,
         timestamp: f64,
     ) {
+        // first step - detect viable feature keypoints using the FAST-detection algorithm
+        // second step - compute descriptors about keypoints (using BRIEF?)
+        let features: Vec<_> = corners_fast9(&grayscale_with_type(image_buffer), 20)
+            .into_iter()
+            .map(|Corner { x, y, .. }| {
+                let keypoint = KeyPoint { x, y };
+                let descriptor = compute_descriptor(&keypoint);
+                (keypoint, descriptor)
+            })
+            .collect();
+
+        if let Some(last_features) = &self.tracker.last_key_frame {
+            for (keypoint, _) in &last_features.frame.features {
+                drawing::draw_hollow_circle_mut(
+                    image_buffer,
+                    // draw the keypoint onto the image
+                    (keypoint.x as _, keypoint.y as _),
+                    // draw everything as a dot
+                    1,
+                    *GREEN,
+                );
+            }
+
+            for (keypoint, _) in &features {
+                drawing::draw_hollow_circle_mut(
+                    image_buffer,
+                    // draw the keypoint onto the image
+                    (keypoint.x as _, keypoint.y as _),
+                    // draw everything as a dot
+                    1,
+                    *GREEN,
+                );
+            }
+
+            // draw matches
+            for ((kp1, _), (kp2, _)) in compute_matches(&features, &last_features.frame.features) {
+                drawing::draw_line_segment_mut(
+                    image_buffer,
+                    (kp1.x as _, kp1.y as _),
+                    (kp2.x as _, kp2.y as _),
+                    *BLUE,
+                );
+            }
+        }
+
+        self.tracker.last_key_frame = Some(KeyFrame {
+            frame: Frame {
+                features,
+                ..Default::default()
+            },
+        });
     }
     fn activate_localization_mode(&mut self) {}
     fn deactivate_localization_mode(&mut self) {}
@@ -71,8 +105,50 @@ impl System {
     pub fn shutdown(self) {}
 }
 
+type T = f64;
+pub fn get_camera_intrinsic(f: T, w: T, h: T) -> Matrix3<T> {
+    Matrix3::new(
+        f,
+        0 as _,
+        w / 2.0,
+        0 as _,
+        f,
+        h / 2.0,
+        0 as _,
+        0 as _,
+        1 as _,
+    )
+}
+
 type Measurements = u128;
 
 fn get_measurements() {
     let measurements: Vec<(u8, u8)> = Vec::new();
 }
+
+fn compute_descriptor(keypoint: &KeyPoint) -> Descriptor {
+    return 5;
+}
+
+fn compute_matches<'a>(
+    features1: &'a Vec<Feature>,
+    features2: &'a Vec<Feature>,
+) -> Vec<(&'a Feature, &'a Feature)> {
+    let mut matches = Vec::new();
+    for feature1 in features1 {
+        for feature2 in features2 {
+            if features_compatible(feature1, feature2) {
+                matches.push((feature1, feature2));
+            }
+        }
+    }
+    return matches;
+}
+
+fn features_compatible(feature1: &Feature, feature2: &Feature) -> bool {
+    return feature1.0.x.abs_diff(feature2.0.x).pow(2) + feature1.0.y.abs_diff(feature2.0.y).pow(2)
+        < 50;
+}
+
+static GREEN: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 255, 0, 255]));
+static BLUE: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 0, 255, 255]));
