@@ -1,17 +1,12 @@
 use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
-use imageproc::{
-    corners::{corners_fast9, Corner},
-    drawing,
-};
+use imageproc::drawing;
 use nalgebra::Matrix3;
 use once_cell::sync::Lazy;
 
 use crate::{
-    frame::{Descriptor, Feature, Frame, KeyFrame, KeyPoint},
+    frame::{Feature, Frame, KeyFrame},
     tracking::Tracking,
 };
-
-struct MapPoint {}
 
 #[derive(Default)]
 pub struct System {
@@ -44,34 +39,26 @@ impl System {
         image_buffer: &mut ImageBuffer<Rgba<u8>, &mut [u8]>,
         timestamp: f64,
     ) {
-        // first step - detect viable feature keypoints using the FAST-detection algorithm
-        // second step - compute descriptors about keypoints (using BRIEF?)
-        let features: Vec<_> = corners_fast9(&grayscale_with_type(image_buffer), 20)
-            .into_iter()
-            .map(|Corner { x, y, .. }| {
-                let keypoint = KeyPoint { x, y };
-                let descriptor = compute_descriptor(&keypoint);
-                (keypoint, descriptor)
-            })
-            .collect();
+        let grayscale_image = grayscale_with_type(image_buffer);
+        let features: Vec<Feature> = Feature::from_fast_and_brief_128(&grayscale_image);
 
         if let Some(last_features) = &self.tracker.last_key_frame {
-            for (keypoint, _) in &last_features.frame.features {
+            for Feature { keypoint: kp, .. } in &last_features.frame.features {
                 drawing::draw_hollow_circle_mut(
                     image_buffer,
                     // draw the keypoint onto the image
-                    (keypoint.x as _, keypoint.y as _),
+                    (kp.x as _, kp.y as _),
                     // draw everything as a dot
                     1,
                     *GREEN,
                 );
             }
 
-            for (keypoint, _) in &features {
+            for Feature { keypoint: kp, .. } in &features {
                 drawing::draw_hollow_circle_mut(
                     image_buffer,
                     // draw the keypoint onto the image
-                    (keypoint.x as _, keypoint.y as _),
+                    (kp.x as _, kp.y as _),
                     // draw everything as a dot
                     1,
                     *GREEN,
@@ -79,7 +66,9 @@ impl System {
             }
 
             // draw matches
-            for ((kp1, _), (kp2, _)) in compute_matches(&features, &last_features.frame.features) {
+            for (Feature { keypoint: kp1, .. }, Feature { keypoint: kp2, .. }) in
+                compute_matches(&features, &last_features.frame.features)
+            {
                 drawing::draw_line_segment_mut(
                     image_buffer,
                     (kp1.x as _, kp1.y as _),
@@ -115,10 +104,6 @@ pub fn get_camera_intrinsic(f: T, w: T, h: T) -> Matrix3<T> {
     )
 }
 
-fn compute_descriptor(keypoint: &KeyPoint) -> Descriptor {
-    return 5;
-}
-
 fn compute_matches<'a>(
     features1: &'a Vec<Feature>,
     features2: &'a Vec<Feature>,
@@ -135,7 +120,8 @@ fn compute_matches<'a>(
 }
 
 fn features_compatible(feature1: &Feature, feature2: &Feature) -> bool {
-    return feature1.0.x.abs_diff(feature2.0.x).pow(2) + feature1.0.y.abs_diff(feature2.0.y).pow(2)
+    return feature1.keypoint.x.abs_diff(feature2.keypoint.x).pow(2)
+        + feature1.keypoint.y.abs_diff(feature2.keypoint.y).pow(2)
         < 50;
 }
 
