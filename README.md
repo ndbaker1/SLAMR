@@ -10,3 +10,5 @@ SLAM implementation with IMU integration written in Rust
 - [Loop closure detection in SLAM](https://www.robots.ox.ac.uk/~mobile/Papers/VisualLoopClosureSLAM.pdf)
 - [George Hotz SLAM Livecodeing Session](https://github.com/geohot/twitchslam)
 - [An Iterative Pose Estimation Algorithm Based on Epipolar Geometry With Application to Multi-Target Tracking](https://par.nsf.gov/servlets/purl/10316378)
+- [Fast Feature Pyramids for Object Detection](https://pdollar.github.io/files/papers/DollarPAMI14pyramids.pdf)
+- [ORB: an efficient alternative to SIFT and SURF](http://www.gwylab.com/download/ORB_2012.pdf)
