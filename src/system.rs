@@ -1,8 +1,10 @@
+use arrsac::Arrsac;
 use bitarray::BitArray;
 use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
 use imageproc::drawing;
 use nalgebra::Matrix3;
 use once_cell::sync::Lazy;
+use sample_consensus::{Consensus, Estimator};
 use space::{Knn, KnnFromBatch, LinearKnn, Metric};
 
 use crate::{
@@ -31,11 +33,6 @@ pub struct System {
 // TODO - Local Bundle Adjustment & Global Bundle Adjustment
 
 impl System {
-    /// Create the Local Mapping and Loop Closing
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn track_monocular(
         &mut self,
         image_buffer: &mut ImageBuffer<Rgba<u8>, &mut [u8]>,
@@ -52,7 +49,7 @@ impl System {
                     (keypoint.x as _, keypoint.y as _),
                     // draw everything as a dot
                     1,
-                    *GREEN,
+                    *RED,
                 );
             }
 
@@ -73,23 +70,31 @@ impl System {
             let search: LinearKnn<FeatureHamming, _> = KnnFromBatch::from_batch(data.iter());
 
             // Find the mappings from the last frame onto the current frame using kNN (K Nearest Neighbor).
-            for feature in &last_frame.features {
+            let matches = last_frame.features.iter().flat_map(|feature| {
                 // uinsg a knn of 1 to just get the closest matched
-                let matches = search.knn(&feature, 1);
+                search
+                    .knn(&feature, 1)
+                    .into_iter()
+                    .filter(|q| q.0.distance < 32)
+                    .map(|(_, matched_feature, _)| (feature, matched_feature))
+                    .collect::<Vec<_>>()
+            });
 
-                // draw matches to the image for debugging
-                for matched_feature in matches {
-                    drawing::draw_line_segment_mut(
-                        image_buffer,
-                        (feature.keypoint.x as _, feature.keypoint.y as _),
-                        (
-                            features[matched_feature.0.index].keypoint.x as _,
-                            features[matched_feature.0.index].keypoint.y as _,
-                        ),
-                        *BLUE,
-                    );
-                }
+            //  draw matches to the image for debugging
+            for (m1, m2) in matches {
+                drawing::draw_line_segment_mut(
+                    image_buffer,
+                    (m1.keypoint.x as _, m1.keypoint.y as _),
+                    (m2.keypoint.x as _, m2.keypoint.y as _),
+                    *BLUE,
+                );
             }
+
+            // if let Some(inliers) =
+            //     Arrsac::new(20.0, rand::thread_rng()).model_inliers(todo!(), matches)
+            // {
+            //     //
+            // }
         }
 
         self.tracker.last_key_frame = Some(Frame {
@@ -130,4 +135,5 @@ impl Metric<Feature> for FeatureHamming {
 }
 
 static GREEN: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 255, 0, 255]));
+static RED: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[255, 0, 0, 255]));
 static BLUE: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 0, 255, 255]));
