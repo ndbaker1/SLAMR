@@ -1,5 +1,7 @@
 use image::{ImageBuffer, Luma};
 use imageproc::corners::{corners_fast9, Corner};
+use once_cell::sync::Lazy;
+use rand::{rngs::StdRng, SeedableRng};
 use rand_distr::{Distribution, Normal};
 
 /// Representation of a pixel point on an image
@@ -7,6 +9,24 @@ use rand_distr::{Distribution, Normal};
 pub struct KeyPoint {
     pub x: u32,
     pub y: u32,
+}
+
+impl KeyPoint {
+    pub fn distance_squared(&self, other: &Self) -> u32 {
+        let dx = if self.x > other.x {
+            self.x - other.x
+        } else {
+            other.x - self.x
+        };
+
+        let dy = if self.y > other.y {
+            self.y - other.y
+        } else {
+            other.y - self.y
+        };
+
+        return dx * dx + dy * dy;
+    }
 }
 
 /// Feature object which holds a coordinate/pixel on a page
@@ -52,21 +72,39 @@ pub struct Frame {
 
 /// Compute BRIEF (Binary Robust Independent Elementary Features) on a given grayscale image given the target keypoint.
 pub fn compute_brief_128(keypoint: &KeyPoint, image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> [u8; 16] {
-    // assuming that normal distribution sampling is going to be bounded by (+-) 10 for now.
-    // this results in patches that are 20 x 20 pixels
-    let normal_dist: Normal<f64> = Normal::new(0 as _, 2 as _).unwrap();
+    /// Precomputed samples taked un to 512 bits for BREIF point samples.
+    /// The values remain consistent accross frames, because we want to achieve a similar level of entropy
+    /// to best match our previous encounters with points.
+    static BRIEF512_SAMPLES: Lazy<[[u32; 4]; 512]> = Lazy::new(|| {
+        // use reproducible random numbers so that
+        let mut rng = StdRng::seed_from_u64(42);
+
+        // assuming that normal distribution sampling is going to be bounded by (+-) 10 for now.
+        // this results in patches that are 20 x 20 pixels
+        let normal_dist: Normal<f64> = Normal::new(0 as _, 2 as _).unwrap();
+
+        let mut samples = [[0; 4]; 512];
+        for i in 0..512 {
+            samples[i] = [
+                normal_dist.sample(&mut rng) as u32,
+                normal_dist.sample(&mut rng) as u32,
+                normal_dist.sample(&mut rng) as u32,
+                normal_dist.sample(&mut rng) as u32,
+            ];
+        }
+
+        samples
+    });
+
+    const BITS: usize = u8::BITS as _;
 
     let mut brief_descriptor = [0; 16];
-    for i in 0..16 {
-        for _ in 0..u8::BITS {
-            let (x1, y1) = (
-                keypoint.x + normal_dist.sample(&mut rand::thread_rng()) as u32,
-                keypoint.y + normal_dist.sample(&mut rand::thread_rng()) as u32,
-            );
-            let (x2, y2) = (
-                keypoint.x + normal_dist.sample(&mut rand::thread_rng()) as u32,
-                keypoint.y + normal_dist.sample(&mut rand::thread_rng()) as u32,
-            );
+    for i in 0..16usize {
+        for j in 0..BITS as usize {
+            let [p1x, p1y, p2x, p2y] = BRIEF512_SAMPLES[i * BITS + j];
+
+            let (x1, y1) = (keypoint.x + p1x, keypoint.y + p1y);
+            let (x2, y2) = (keypoint.x + p2x, keypoint.y + p2y);
 
             let (first, second) = match (
                 image.get_pixel_checked(x1, y1),

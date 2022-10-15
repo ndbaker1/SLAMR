@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use arrsac::Arrsac;
 use bitarray::BitArray;
 use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
@@ -15,14 +17,8 @@ use crate::{
 #[derive(Default)]
 pub struct System {
     pub camera_intrinsics: (Matrix3<f64>, Matrix3<f64>),
-    /// ORB vocabulary used for place recognition and feature matching using Visual Bag of Words (VBoW)
-    //ORBVocabulary* mppubeVocabulary;
-
     /// KeyFrame database for place recognition (relocalization and loop detection).
     //KeyFrameDatabase* mpKeyFrameDatabase;
-
-    /// Map structure that stores the pointers to all KeyFrames and MapPoints.
-    //Map* mpMap;
 
     /// Tracker. It receives a frame and computes the associated camera pose.
     /// It also decides when to insert a new keyframe, create some new MapPoints and
@@ -69,16 +65,46 @@ impl System {
             let data: Vec<_> = features.iter().map(|f| (f.clone(), 1)).collect();
             let search: LinearKnn<FeatureHamming, _> = KnnFromBatch::from_batch(data.iter());
 
-            // Find the mappings from the last frame onto the current frame using kNN (K Nearest Neighbor).
-            let matches = last_frame.features.iter().flat_map(|feature| {
-                // uinsg a knn of 1 to just get the closest matched
-                search
-                    .knn(&feature, 1)
-                    .into_iter()
-                    .filter(|q| q.0.distance < 32)
-                    .map(|(_, matched_feature, _)| (feature, matched_feature))
-                    .collect::<Vec<_>>()
-            });
+            let matches = if features.len() > 1 {
+                let mut seen_current = HashSet::<usize>::new();
+                let mut seen_last = HashSet::<usize>::new();
+
+                // Find the mappings from the last frame onto the current frame using kNN (K Nearest Neighbor).
+                last_frame
+                    .features
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, feature)| {
+                        // find k = 2 nearest neighbors and then perform Lowe's test
+                        // https://stackoverflow.com/questions/51197091/how-does-the-lowes-ratio-test-work
+                        let nearest = search.knn(&feature, 2);
+
+                        // this value is kind of high, but it wont give that many points if i make it any lower ಥ_ಥ
+                        const LOWE_RATIO: f32 = 0.9;
+
+                        // filter the results to have bearable hamming distances,
+                        if nearest.iter().all(|q| q.0.distance < 69)
+                        // the appliy Lowe's ratio test to find out if points are acceptable.
+                        && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
+                        // NOT NEEDED: crude distance test on points
+                        && feature.keypoint.distance_squared(&nearest[0].1.keypoint) < 150
+                        // check that these points do not belong to any data set yet
+                        && !seen_current.contains(&nearest[0].0.index)
+                        && !seen_last.contains(&i)
+                        {
+                            seen_current.insert(nearest[0].0.index);
+                            seen_last.insert(i);
+                            Some((feature, nearest[0].1))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            println!("num matches: {}", matches.len());
 
             //  draw matches to the image for debugging
             for (m1, m2) in matches {
