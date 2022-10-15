@@ -1,4 +1,4 @@
-use crate::frame::{Frame, KeyFrame};
+use crate::frame::Frame;
 
 /// Tracking states
 #[derive(Default)]
@@ -23,5 +23,5 @@ pub struct Tracking {
 
     pub initial_frame: Frame,
 
-    pub last_key_frame: Option<KeyFrame>,
+    pub last_key_frame: Option<Frame>,
 }

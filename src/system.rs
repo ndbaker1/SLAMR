@@ -1,10 +1,12 @@
+use bitarray::BitArray;
 use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
 use imageproc::drawing;
 use nalgebra::Matrix3;
 use once_cell::sync::Lazy;
+use space::{Knn, KnnFromBatch, LinearKnn, Metric};
 
 use crate::{
-    frame::{Feature, Frame, KeyFrame},
+    frame::{Feature, Frame},
     tracking::Tracking,
 };
 
@@ -42,51 +44,64 @@ impl System {
         let grayscale_image = grayscale_with_type(image_buffer);
         let features: Vec<Feature> = Feature::from_fast_and_brief_128(&grayscale_image);
 
-        if let Some(last_features) = &self.tracker.last_key_frame {
-            for Feature { keypoint: kp, .. } in &last_features.frame.features {
+        if let Some(last_frame) = &self.tracker.last_key_frame {
+            for Feature { keypoint, .. } in &last_frame.features {
                 drawing::draw_hollow_circle_mut(
                     image_buffer,
                     // draw the keypoint onto the image
-                    (kp.x as _, kp.y as _),
+                    (keypoint.x as _, keypoint.y as _),
                     // draw everything as a dot
                     1,
                     *GREEN,
                 );
             }
 
-            for Feature { keypoint: kp, .. } in &features {
+            for Feature { keypoint, .. } in &features {
                 drawing::draw_hollow_circle_mut(
                     image_buffer,
                     // draw the keypoint onto the image
-                    (kp.x as _, kp.y as _),
+                    (keypoint.x as _, keypoint.y as _),
                     // draw everything as a dot
                     1,
                     *GREEN,
                 );
             }
 
-            // draw matches
-            for (Feature { keypoint: kp1, .. }, Feature { keypoint: kp2, .. }) in
-                compute_matches(&features, &last_features.frame.features)
-            {
-                drawing::draw_line_segment_mut(
-                    image_buffer,
-                    (kp1.x as _, kp1.y as _),
-                    (kp2.x as _, kp2.y as _),
-                    *BLUE,
-                );
+            // prepare a data structure to perform knn
+            // TODO: I dont like this requirement on owned memory. find a different implementation or write one.
+            let data: Vec<_> = features.iter().map(|f| (f.clone(), 1)).collect();
+            let search: LinearKnn<FeatureHamming, _> = KnnFromBatch::from_batch(data.iter());
+
+            // Find the mappings from the last frame onto the current frame using kNN (K Nearest Neighbor).
+            for feature in &last_frame.features {
+                // uinsg a knn of 1 to just get the closest matched
+                let matches = search.knn(&feature, 1);
+
+                // draw matches to the image for debugging
+                for matched_feature in matches {
+                    drawing::draw_line_segment_mut(
+                        image_buffer,
+                        (feature.keypoint.x as _, feature.keypoint.y as _),
+                        (
+                            features[matched_feature.0.index].keypoint.x as _,
+                            features[matched_feature.0.index].keypoint.y as _,
+                        ),
+                        *BLUE,
+                    );
+                }
             }
         }
 
-        self.tracker.last_key_frame = Some(KeyFrame {
-            frame: Frame {
-                features,
-                ..Default::default()
-            },
+        self.tracker.last_key_frame = Some(Frame {
+            features,
+            ..Default::default()
         });
     }
 
-    pub fn shutdown(self) {}
+    // Run any important cleanup procedures then SLAM instance is no longer in use
+    pub fn shutdown(self) {
+        // TODO: cleanup procedures
+    }
 }
 
 type T = f64;
@@ -104,25 +119,14 @@ pub fn get_camera_intrinsic(f: T, w: T, h: T) -> Matrix3<T> {
     )
 }
 
-fn compute_matches<'a>(
-    features1: &'a Vec<Feature>,
-    features2: &'a Vec<Feature>,
-) -> Vec<(&'a Feature, &'a Feature)> {
-    let mut matches = Vec::new();
-    for feature1 in features1 {
-        for feature2 in features2 {
-            if features_compatible(feature1, feature2) {
-                matches.push((feature1, feature2));
-            }
-        }
-    }
-    return matches;
-}
+#[derive(Default)]
+struct FeatureHamming;
 
-fn features_compatible(feature1: &Feature, feature2: &Feature) -> bool {
-    return feature1.keypoint.x.abs_diff(feature2.keypoint.x).pow(2)
-        + feature1.keypoint.y.abs_diff(feature2.keypoint.y).pow(2)
-        < 50;
+impl Metric<Feature> for FeatureHamming {
+    type Unit = u32;
+    fn distance(&self, a: &Feature, b: &Feature) -> Self::Unit {
+        BitArray::new(a.descriptor).distance(&BitArray::new(b.descriptor))
+    }
 }
 
 static GREEN: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 255, 0, 255]));

@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, thread::sleep, time::Duration};
 
-use crate::frame::KeyFrame;
+use crate::frame::Frame;
 
 /// Loop Closure is used to reduce sensor drift accumulation
 /// and improve the consistency of localization
@@ -8,7 +8,7 @@ use crate::frame::KeyFrame;
 /// By using a sliding window of KeyFrames (distinct Frames selected to represent the path)
 #[derive(Default)]
 pub struct LoopClosure {
-    loop_keyframe_queue: VecDeque<KeyFrame>,
+    loop_keyframe_queue: VecDeque<Frame>,
 }
 
 impl LoopClosure {
