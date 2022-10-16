@@ -66,8 +66,8 @@ impl Feature {
 
 #[derive(Default)]
 pub struct Frame {
-    pub timestamp: f64,
     pub features: Vec<Feature>,
+    pub timestamp: f64,
 }
 
 /// Compute BRIEF (Binary Robust Independent Elementary Features) on a given grayscale image given the target keypoint.

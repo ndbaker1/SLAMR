@@ -1,7 +1,7 @@
 mod frame;
 mod loop_closure;
 pub mod system;
-mod tracking;
+pub mod tracker;
 
 #[cfg(test)]
 mod tests {}
