@@ -12,3 +12,4 @@ SLAM implementation with IMU integration written in Rust
 - [An Iterative Pose Estimation Algorithm Based on Epipolar Geometry With Application to Multi-Target Tracking](https://par.nsf.gov/servlets/purl/10316378)
 - [Fast Feature Pyramids for Object Detection](https://pdollar.github.io/files/papers/DollarPAMI14pyramids.pdf)
 - [ORB: an efficient alternative to SIFT and SURF](http://www.gwylab.com/download/ORB_2012.pdf)
+- [Visual Odometry Tutorial](https://www.researchgate.net/publication/220556161_Visual_Odometry_Tutorial)

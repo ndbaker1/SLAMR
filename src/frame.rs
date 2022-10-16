@@ -6,12 +6,12 @@ use rand_distr::{Distribution, Normal};
 
 /// Representation of a pixel point on an image
 #[derive(Clone)]
-pub struct KeyPoint {
+pub struct Keypoint {
     pub x: u32,
     pub y: u32,
 }
 
-impl KeyPoint {
+impl Keypoint {
     pub fn distance_squared(&self, other: &Self) -> u32 {
         let dx = if self.x > other.x {
             self.x - other.x
@@ -33,7 +33,7 @@ impl KeyPoint {
 /// and tries to handle a generic descriptor
 #[derive(Clone)]
 pub struct Feature<D = [u8; 16]> {
-    pub keypoint: KeyPoint,
+    pub keypoint: Keypoint,
     pub descriptor: D,
 }
 
@@ -53,7 +53,7 @@ impl Feature {
         corners_fast9(image, FAST_CORNERS_THESHOLD)
             .into_iter()
             .map(|Corner { x, y, .. }| {
-                let keypoint = KeyPoint { x, y };
+                let keypoint = Keypoint { x, y };
                 let descriptor = compute_brief_128(&keypoint, &smoothed_image);
                 Feature {
                     keypoint,
@@ -71,7 +71,7 @@ pub struct Frame {
 }
 
 /// Compute BRIEF (Binary Robust Independent Elementary Features) on a given grayscale image given the target keypoint.
-pub fn compute_brief_128(keypoint: &KeyPoint, image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> [u8; 16] {
+pub fn compute_brief_128(keypoint: &Keypoint, image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> [u8; 16] {
     /// Precomputed samples taked un to 512 bits for BREIF point samples.
     /// The values remain consistent accross frames, because we want to achieve a similar level of entropy
     /// to best match our previous encounters with points.
