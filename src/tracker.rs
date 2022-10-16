@@ -220,7 +220,7 @@ pub type Quaternion = [f64; 4];
 pub type Vec3 = [f64; 3];
 
 pub enum ImuMeasurment {
-    Orientation(Quaternion),
+    OrientationQ(Quaternion),
     Acceleration(Vec3),
 }
 
