@@ -1,7 +1,7 @@
 # SLAMR
 SLAM implementation with IMU integration written in Rust
 
-# References
+# Resources
 - [ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3)
 - [VINS-Mono](https://arxiv.org/pdf/1708.03852.pdf)
 - [VINS-Mobile](https://github.com/HKUST-Aerial-Robotics/VINS-Mobile)
@@ -13,3 +13,4 @@ SLAM implementation with IMU integration written in Rust
 - [Fast Feature Pyramids for Object Detection](https://pdollar.github.io/files/papers/DollarPAMI14pyramids.pdf)
 - [ORB: an efficient alternative to SIFT and SURF](http://www.gwylab.com/download/ORB_2012.pdf)
 - [Visual Odometry Tutorial](https://www.researchgate.net/publication/220556161_Visual_Odometry_Tutorial)
+- [The 8-point algorithm](https://www.cs.cmu.edu/~16385/s17/Slides/12.4_8Point_Algorithm.pdf)
