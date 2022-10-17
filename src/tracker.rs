@@ -40,7 +40,7 @@ impl Tracker {
 
         if let Some(last_frame) = &self.last_frame {
             // draw raw features
-            // #[cfg(feature = "featues")]
+            #[cfg(feature = "featues")]
             {
                 for Feature { keypoint, .. } in &last_frame.features {
                     drawing::draw_hollow_circle_mut(
@@ -87,12 +87,13 @@ impl Tracker {
 
                         // this value is kind of high, but it wont give that many points if i make it any lower ಥ_ಥ
                         const LOWE_RATIO: f32 = 0.9;
-                        const DISTANCE_THRESHOLD: u32 = 32;
+                        // TODO: move to high bits for BRIEF (more than 128)
+                        const DISTANCE_THRESHOLD: u32 = 5;
 
                         // filter the results to have bearable hamming distances,
-                        if nearest.iter().all(|q| q.0.distance < DISTANCE_THRESHOLD)
+                        if nearest.iter().any(|q| q.0.distance < DISTANCE_THRESHOLD)
                         // the appliy Lowe's ratio test to find out if points are acceptable.
-                        && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
+                        // && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
                         // check that these points do not belong to any data set yet
                         && !seen_current.contains(&nearest[0].0.index)
                         && !seen_last.contains(&i)
@@ -139,7 +140,7 @@ impl Tracker {
             // By applying the 8-point algorithm to estimate the Fundamental Matrix, we can use this estimated value in use with
             // RANSAC in order to eliminate outliers and pull out the more useful Essential Matrix.
             // The Essential Matrix will contain the Rotation and Translation from the previous frame to the next.
-            const INLIER_THRESHOLD: f64 = 2.5;
+            const INLIER_THRESHOLD: f64 = 1.0;
 
             if let Some((fundamental, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
                 .model_inliers(&EssentialMatrixEstimator, matches.iter())

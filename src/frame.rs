@@ -11,24 +11,6 @@ pub struct Keypoint {
     pub y: u32,
 }
 
-impl Keypoint {
-    pub fn distance_squared(&self, other: &Self) -> u32 {
-        let dx = if self.x > other.x {
-            self.x - other.x
-        } else {
-            other.x - self.x
-        };
-
-        let dy = if self.y > other.y {
-            self.y - other.y
-        } else {
-            other.y - self.y
-        };
-
-        return dx * dx + dy * dy;
-    }
-}
-
 /// Feature object which holds a coordinate/pixel on a page
 /// and tries to handle a generic descriptor
 #[derive(Clone)]
@@ -39,26 +21,30 @@ pub struct Feature<D = [u8; 16]> {
 
 impl Feature {
     /// Uses FAST (Features from Accelerated Segment Test) as a keypoint detector for features like corners in a grayscale image,
-    /// then applies the BRIEF (Binary Robust Independent Elementary Features) to compute descriptors for these keypoints.
+    fn fast_keypoints(image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Keypoint> {
+        const FAST_CORNERS_THESHOLD: u8 = 35;
+
+        corners_fast9(image, FAST_CORNERS_THESHOLD)
+            .into_iter()
+            .map(|Corner { x, y, .. }| Keypoint { x, y })
+            .collect()
+    }
+
+    /// applies the BRIEF (Binary Robust Independent Elementary Features) to compute descriptors for keypoints.
     pub fn from_fast_and_brief_128(image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Self> {
         // using a kernel value of 2 indicated by reference:
         // https://medium.com/data-breach/introduction-to-brief-binary-robust-independent-elementary-features-436f4a31a0e6
         const GAUSSIAN_KERNEL_SIGMA: f32 = 2.0;
-        const FAST_CORNERS_THESHOLD: u8 = 35;
 
         // apply a guassion blur to the image for computing BRIEF descriptors,
         // that way the image is not overly sesnsitive to high frequency noise.
         let smoothed_image = imageproc::filter::gaussian_blur_f32(&image, GAUSSIAN_KERNEL_SIGMA);
 
-        corners_fast9(image, FAST_CORNERS_THESHOLD)
+        Feature::fast_keypoints(image)
             .into_iter()
-            .map(|Corner { x, y, .. }| {
-                let keypoint = Keypoint { x, y };
-                let descriptor = compute_brief_128(&keypoint, &smoothed_image);
-                Feature {
-                    keypoint,
-                    descriptor,
-                }
+            .map(|keypoint| Feature {
+                descriptor: compute_brief_128(&keypoint, &smoothed_image),
+                keypoint,
             })
             .collect()
     }
@@ -72,30 +58,6 @@ pub struct Frame {
 
 /// Compute BRIEF (Binary Robust Independent Elementary Features) on a given grayscale image given the target keypoint.
 pub fn compute_brief_128(keypoint: &Keypoint, image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> [u8; 16] {
-    /// Precomputed samples taked un to 512 bits for BREIF point samples.
-    /// The values remain consistent accross frames, because we want to achieve a similar level of entropy
-    /// to best match our previous encounters with points.
-    static BRIEF512_SAMPLES: Lazy<[[u32; 4]; 512]> = Lazy::new(|| {
-        // use reproducible random numbers so that
-        let mut rng = StdRng::seed_from_u64(42);
-
-        // assuming that normal distribution sampling is going to be bounded by (+-) 10 for now.
-        // this results in patches that are 20 x 20 pixels
-        let normal_dist: Normal<f64> = Normal::new(0 as _, 2 as _).unwrap();
-
-        let mut samples = [[0; 4]; 512];
-        for i in 0..512 {
-            samples[i] = [
-                normal_dist.sample(&mut rng) as u32,
-                normal_dist.sample(&mut rng) as u32,
-                normal_dist.sample(&mut rng) as u32,
-                normal_dist.sample(&mut rng) as u32,
-            ];
-        }
-
-        samples
-    });
-
     const BITS: usize = u8::BITS as _;
 
     let mut brief_descriptor = [0; 16];
@@ -123,6 +85,30 @@ pub fn compute_brief_128(keypoint: &Keypoint, image: &ImageBuffer<Luma<u8>, Vec<
 
     brief_descriptor
 }
+
+/// Precomputed samples taked un to 512 bits for BREIF point samples.
+/// The values remain consistent accross frames, because we want to achieve a similar level of entropy
+/// to best match our previous encounters with points.
+static BRIEF512_SAMPLES: Lazy<[[u32; 4]; 512]> = Lazy::new(|| {
+    // use reproducible random numbers so that
+    let mut rng = StdRng::seed_from_u64(42);
+
+    // assuming that normal distribution sampling is going to be bounded by (+-) 10 for now.
+    // this results in patches that are 20 x 20 pixels
+    let normal_dist: Normal<f64> = Normal::new(0 as _, 2 as _).unwrap();
+
+    let mut samples = [[0; 4]; 512];
+    for i in 0..512 {
+        samples[i] = [
+            normal_dist.sample(&mut rng) as u32,
+            normal_dist.sample(&mut rng) as u32,
+            normal_dist.sample(&mut rng) as u32,
+            normal_dist.sample(&mut rng) as u32,
+        ];
+    }
+
+    samples
+});
 
 #[derive(Default)]
 pub struct KeyframeDatabase {
