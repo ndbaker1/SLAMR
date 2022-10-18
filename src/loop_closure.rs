@@ -7,11 +7,11 @@ use crate::frame::Frame;
 ///
 /// By using a sliding window of KeyFrames (distinct Frames selected to represent the path)
 #[derive(Default)]
-pub struct LoopClosure {
-    loop_keyframe_queue: VecDeque<Frame>,
+pub struct LoopClosure<Feature> {
+    loop_keyframe_queue: VecDeque<Frame<Feature>>,
 }
 
-impl LoopClosure {
+impl<F> LoopClosure<F> {
     pub fn run(&mut self) {
         loop {
             if let Some(last_keyframe) = self.loop_keyframe_queue.front() {

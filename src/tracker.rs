@@ -9,7 +9,11 @@ use once_cell::sync::Lazy;
 use sample_consensus::{Consensus, Estimator, Model};
 use space::{Knn, KnnFromBatch, LinearKnn, Metric};
 
-use crate::frame::{Feature, Frame};
+use crate::frame::{BinaryDescriptor, Feature, Frame};
+
+/// Const Generic assignement of Feature Descriptor Size
+const DESCRIPTOR_SIZE: usize = 512 / u8::BITS as usize;
+type SizedFeature = Feature<BinaryDescriptor<DESCRIPTOR_SIZE>>;
 
 /// Tracking states
 #[derive(Default)]
@@ -28,15 +32,15 @@ pub enum TrackingState {
 pub struct Tracker {
     pub tracking_state: TrackingState,
     pub last_tracking_state: TrackingState,
-    pub current_frame: Frame,
-    pub last_frame: Option<Frame>,
+    pub current_frame: Frame<SizedFeature>,
+    pub last_frame: Option<Frame<SizedFeature>>,
 }
 
 impl Tracker {
     /// Using the Image and Visual Odometry find Rt: the Rotation and Translation matricies.
     pub fn get_rt_pose_change(&mut self, image_buffer: &mut ImageBuffer<Rgba<u8>, &mut [u8]>) {
         let grayscale_image = grayscale_with_type(image_buffer);
-        let features: Vec<Feature> = Feature::from_fast_and_brief_128(&grayscale_image);
+        let features: Vec<SizedFeature> = Feature::from_fast_and_brief(&grayscale_image);
 
         if let Some(last_frame) = &self.last_frame {
             // draw raw features
@@ -86,14 +90,14 @@ impl Tracker {
                         let nearest = search.knn(&feature, 2);
 
                         // this value is kind of high, but it wont give that many points if i make it any lower ಥ_ಥ
-                        const LOWE_RATIO: f32 = 0.9;
-                        // TODO: move to high bits for BRIEF (more than 128)
-                        const DISTANCE_THRESHOLD: u32 = 5;
+                        const LOWE_RATIO: f32 = 0.75;
+                        // scale the threshold with the size of the descriptor?
+                        const DISTANCE_THRESHOLD: u32 = DESCRIPTOR_SIZE as _;
 
                         // filter the results to have bearable hamming distances,
                         if nearest.iter().any(|q| q.0.distance < DISTANCE_THRESHOLD)
                         // the appliy Lowe's ratio test to find out if points are acceptable.
-                        // && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
+                        && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
                         // check that these points do not belong to any data set yet
                         && !seen_current.contains(&nearest[0].0.index)
                         && !seen_last.contains(&i)
@@ -140,7 +144,7 @@ impl Tracker {
             // By applying the 8-point algorithm to estimate the Fundamental Matrix, we can use this estimated value in use with
             // RANSAC in order to eliminate outliers and pull out the more useful Essential Matrix.
             // The Essential Matrix will contain the Rotation and Translation from the previous frame to the next.
-            const INLIER_THRESHOLD: f64 = 1.0;
+            const INLIER_THRESHOLD: f64 = 1.8;
 
             if let Some((fundamental, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
                 .model_inliers(&EssentialMatrixEstimator, matches.iter())
@@ -210,9 +214,9 @@ impl Tracker {
 #[derive(Default)]
 struct FeatureHamming;
 
-impl<'f> Metric<&'f Feature> for FeatureHamming {
+impl<'f> Metric<&'f SizedFeature> for FeatureHamming {
     type Unit = u32;
-    fn distance(&self, a: &&Feature, b: &&Feature) -> Self::Unit {
+    fn distance(&self, a: &&SizedFeature, b: &&SizedFeature) -> Self::Unit {
         BitArray::new(a.descriptor).distance(&BitArray::new(b.descriptor))
     }
 }
@@ -229,7 +233,7 @@ pub enum ImuMeasurment {
 
 pub struct FundamentalMatrix(Matrix3<f64>);
 
-type FeaturePair<'a> = (&'a Feature, &'a Feature);
+type FeaturePair<'a> = (&'a SizedFeature, &'a SizedFeature);
 
 impl<'a> Model<&'a FeaturePair<'a>> for FundamentalMatrix {
     fn residual(&self, data: &&FeaturePair<'a>) -> f64 {

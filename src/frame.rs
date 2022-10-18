@@ -5,21 +5,32 @@ use rand::{rngs::StdRng, SeedableRng};
 use rand_distr::{Distribution, Normal};
 
 /// Representation of a pixel point on an image
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Keypoint {
     pub x: u32,
     pub y: u32,
 }
 
+pub type BinaryDescriptor<const N: usize> = [u8; N];
+
 /// Feature object which holds a coordinate/pixel on a page
 /// and tries to handle a generic descriptor
 #[derive(Clone)]
-pub struct Feature<D = [u8; 16]> {
+pub struct Feature<Descriptor> {
     pub keypoint: Keypoint,
-    pub descriptor: D,
+    pub descriptor: Descriptor,
 }
 
-impl Feature {
+impl<const N: usize> Default for Feature<BinaryDescriptor<N>> {
+    fn default() -> Self {
+        Self {
+            keypoint: Keypoint::default(),
+            descriptor: [0; N],
+        }
+    }
+}
+
+impl<A> Feature<A> {
     /// Uses FAST (Features from Accelerated Segment Test) as a keypoint detector for features like corners in a grayscale image,
     fn fast_keypoints(image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Keypoint> {
         const FAST_CORNERS_THESHOLD: u8 = 35;
@@ -29,9 +40,11 @@ impl Feature {
             .map(|Corner { x, y, .. }| Keypoint { x, y })
             .collect()
     }
+}
 
+impl<const N: usize> Feature<BinaryDescriptor<N>> {
     /// applies the BRIEF (Binary Robust Independent Elementary Features) to compute descriptors for keypoints.
-    pub fn from_fast_and_brief_128(image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Self> {
+    pub fn from_fast_and_brief(image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Self> {
         // using a kernel value of 2 indicated by reference:
         // https://medium.com/data-breach/introduction-to-brief-binary-robust-independent-elementary-features-436f4a31a0e6
         const GAUSSIAN_KERNEL_SIGMA: f32 = 2.0;
@@ -40,10 +53,10 @@ impl Feature {
         // that way the image is not overly sesnsitive to high frequency noise.
         let smoothed_image = imageproc::filter::gaussian_blur_f32(&image, GAUSSIAN_KERNEL_SIGMA);
 
-        Feature::fast_keypoints(image)
+        Self::fast_keypoints(image)
             .into_iter()
             .map(|keypoint| Feature {
-                descriptor: compute_brief_128(&keypoint, &smoothed_image),
+                descriptor: compute_brief(&keypoint, &smoothed_image),
                 keypoint,
             })
             .collect()
@@ -51,17 +64,23 @@ impl Feature {
 }
 
 #[derive(Default)]
-pub struct Frame {
-    pub features: Vec<Feature>,
+pub struct Frame<Feat> {
+    pub features: Vec<Feat>,
     pub timestamp: f64,
 }
 
 /// Compute BRIEF (Binary Robust Independent Elementary Features) on a given grayscale image given the target keypoint.
-pub fn compute_brief_128(keypoint: &Keypoint, image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> [u8; 16] {
+///
+/// ### CAUTION
+/// const N Generic should be less than `512 / u8::BITS = 64`
+fn compute_brief<const N: usize>(
+    keypoint: &Keypoint,
+    image: &ImageBuffer<Luma<u8>, Vec<u8>>,
+) -> [u8; N] {
     const BITS: usize = u8::BITS as _;
 
-    let mut brief_descriptor = [0; 16];
-    for i in 0..16usize {
+    let mut brief_descriptor = [0; N];
+    for i in 0..N {
         for j in 0..BITS as usize {
             let [p1x, p1y, p2x, p2y] = BRIEF512_SAMPLES[i * BITS + j];
 
@@ -111,6 +130,6 @@ static BRIEF512_SAMPLES: Lazy<[[u32; 4]; 512]> = Lazy::new(|| {
 });
 
 #[derive(Default)]
-pub struct KeyframeDatabase {
-    key_frames: Vec<Frame>,
+pub struct KeyframeDatabase<F> {
+    key_frames: Vec<Frame<F>>,
 }
