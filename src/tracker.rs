@@ -69,7 +69,7 @@ impl Tracker {
                 }
             }
 
-            // prepare a data structure to perform knn
+            // Prepare feature data to perform kNN matching
             // TODO: I dont like this requirement on owned memory. find a different implementation or write one.
             let data = features.iter().map(|f| (f, 1u8)).collect::<Vec<_>>();
             let search: LinearKnn<FeatureHamming, _> = KnnFromBatch::from_batch(data.iter());
@@ -85,7 +85,7 @@ impl Tracker {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, feature)| {
-                        // find k = 2 nearest neighbors and then perform Lowe's test
+                        // find k = 2 nearest neighbors and then perform Lowe's test to filter out answers potentiall chosen by noise
                         // https://stackoverflow.com/questions/51197091/how-does-the-lowes-ratio-test-work
                         let nearest = search.knn(&feature, 2);
 
@@ -94,16 +94,18 @@ impl Tracker {
                         // scale the threshold with the size of the descriptor?
                         const DISTANCE_THRESHOLD: u32 = DESCRIPTOR_SIZE as _;
 
-                        // filter the results to have bearable hamming distances,
+                        // filter the results to have tolerable hamming distances
                         if nearest.iter().any(|q| q.0.distance < DISTANCE_THRESHOLD)
-                        // the appliy Lowe's ratio test to find out if points are acceptable.
+                        // then apply Lowe's ratio test 
                         && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
-                        // check that these points do not belong to any data set yet
+                        // check that this point has not already been assigned a correspondence
                         && !seen_current.contains(&nearest[0].0.index)
                         && !seen_last.contains(&i)
                         {
+                            // record correspondence
                             seen_current.insert(nearest[0].0.index);
                             seen_last.insert(i);
+
                             Some((feature, *nearest[0].1))
                         } else {
                             None
@@ -140,42 +142,56 @@ impl Tracker {
                 );
             }
 
-            // Performe BA (Bundle Adjustment) through the RANSAC (Random Sampling Consensus) technique to find the Essential Matrix.
-            // By applying the 8-point algorithm to estimate the Fundamental Matrix, we can use this estimated value in use with
-            // RANSAC in order to eliminate outliers and pull out the more useful Essential Matrix.
+            // Exit early if we dont have enough matches to perform 8-point algorithm
+            if matches.len() < 8 {
+                return;
+            }
+
+            // Perform Random Sampling Consensus technique to find the Essential Matrix.
+            // Apply the 8-point algorithm to estimate the Fundamental Matrix, then use this estimated value for
+            // Sampling Consensus in order to eliminate outlier points and isolate the most correct Essential Matrix.
             // The Essential Matrix will contain the Rotation and Translation from the previous frame to the next.
             const INLIER_THRESHOLD: f64 = 1.8;
 
-            if let Some((fundamental, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
+            // This is an ARRSAC (Adaptive Real-Time Random Sample Consensus) package,
+            // which could perform as well or better than RANSAC.
+            // https://people.inf.ethz.ch/pomarc/pubs/RaguramECCV08.pdf
+
+            let (fundamental, inliers) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
                 .model_inliers(&EssentialMatrixEstimator, matches.iter())
-            {
-                // draw matches versions of features
-                // remove the outliers from the matched data set
-                // #[cfg(feature = "inliers")]
-                for (m1, m2) in inliers.into_iter().map(|i| matches[i]) {
-                    drawing::draw_hollow_circle_mut(
-                        image_buffer,
-                        (m1.keypoint.x as _, m1.keypoint.y as _),
-                        1,
-                        *RED,
-                    );
+                // UNWRAP JUSTIFICATION
+                //  We previously checked if the length of the matches set was large
+                //  enough to sample enough points to perform the 8-point algorithm,
+                //  so this function should always be able to return at least one estimate over the data
+                .unwrap();
 
-                    drawing::draw_hollow_circle_mut(
-                        image_buffer,
-                        (m2.keypoint.x as _, m2.keypoint.y as _),
-                        1,
-                        *GREEN,
-                    );
+            // draw matches versions of features
+            // remove the outliers from the matched data set
+            // #[cfg(feature = "inliers")]
+            for (m1, m2) in inliers.into_iter().map(|i| matches[i]) {
+                drawing::draw_hollow_circle_mut(
+                    image_buffer,
+                    (m1.keypoint.x as _, m1.keypoint.y as _),
+                    1,
+                    *RED,
+                );
 
-                    drawing::draw_line_segment_mut(
-                        image_buffer,
-                        (m1.keypoint.x as _, m1.keypoint.y as _),
-                        (m2.keypoint.x as _, m2.keypoint.y as _),
-                        *BLUE,
-                    );
-                }
+                drawing::draw_hollow_circle_mut(
+                    image_buffer,
+                    (m2.keypoint.x as _, m2.keypoint.y as _),
+                    1,
+                    *GREEN,
+                );
 
-                // convert from fundamental to Rt
+                drawing::draw_line_segment_mut(
+                    image_buffer,
+                    (m1.keypoint.x as _, m1.keypoint.y as _),
+                    (m2.keypoint.x as _, m2.keypoint.y as _),
+                    *BLUE,
+                );
+
+                // Convert from Essential Matrix to Rt
+
                 // W = np.mat([[0,-1,0],[1,0,0],[0,0,1]],dtype=float)
                 // U,d,Vt = np.linalg.svd(F)
                 // if np.linalg.det(U) < 0:
@@ -195,7 +211,7 @@ impl Tracker {
                 // if os.getenv("REVERSE") is not None:
                 //     t *= -1
                 // return np.linalg.inv(poseRt(R, t))
-            };
+            }
         }
 
         self.last_frame = Some(Frame {

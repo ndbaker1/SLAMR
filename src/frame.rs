@@ -1,4 +1,4 @@
-use image::{ImageBuffer, Luma};
+use image::{GenericImageView, ImageBuffer, Luma};
 use imageproc::corners::{corners_fast9, Corner};
 use once_cell::sync::Lazy;
 use rand::{rngs::StdRng, SeedableRng};
@@ -31,7 +31,8 @@ impl<const N: usize> Default for Feature<BinaryDescriptor<N>> {
 }
 
 impl<A> Feature<A> {
-    /// Uses FAST (Features from Accelerated Segment Test) as a keypoint detector for features like corners in a grayscale image,
+    /// Uses FAST (Features from Accelerated Segment Test)
+    /// as a keypoint detector for features like corners in a grayscale image
     fn fast_keypoints(image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Keypoint> {
         const FAST_CORNERS_THESHOLD: u8 = 35;
 
@@ -84,17 +85,37 @@ fn compute_brief<const N: usize>(
         for j in 0..BITS as usize {
             let [p1x, p1y, p2x, p2y] = BRIEF512_SAMPLES[i * BITS + j];
 
-            let (x1, y1) = (keypoint.x + p1x, keypoint.y + p1y);
-            let (x2, y2) = (keypoint.x + p2x, keypoint.y + p2y);
+            let (x1, y1) = (keypoint.x as i16 + p1x, keypoint.y as i16 + p1y);
+            let (x2, y2) = (keypoint.x as i16 + p2x, keypoint.y as i16 + p2y);
+            // UNSAFETY JUSTIFICATION
+            //  Correctness
+            //      the range of (x,y) coordinate pairs will always
+            //      have bounds manually checked before calling `unsafe_get_pixel(_,_)`.
+            //  Fallback
+            //      When the bounds are not satisfied for the function,
+            //      we will always use 0 as the descriptor of the pixel in question.
+            //      Remember that these are Grayscale images, where pixel values are `u8`
 
-            let (first, second) = match (
-                image.get_pixel_checked(x1, y1),
-                image.get_pixel_checked(x2, y2),
-            ) {
-                (Some(first), Some(second)) => (first.0[0], second.0[0]),
-                (_, Some(second)) => (0, second.0[0]),
-                (Some(first), _) => (first.0[0], 0),
-                (_, _) => (0, 0),
+            let first = if x1 <= image.width() as i16
+                && x1 >= 0
+                && y1 <= image.height() as i16
+                && y1 >= 0
+            {
+                // SEE UNSAFETY JUSTIFICATION ABOVE
+                unsafe { image.unsafe_get_pixel(x1 as u32, y1 as u32).0[0] }
+            } else {
+                0
+            };
+
+            let second = if x2 <= image.width() as i16
+                && x2 >= 0
+                && y2 <= image.height() as i16
+                && y2 >= 0
+            {
+                // SEE UNSAFETY JUSTIFICATION ABOVE
+                unsafe { image.unsafe_get_pixel(x2 as u32, y2 as u32).0[0] }
+            } else {
+                0
             };
 
             brief_descriptor[i] += if first > second { 1 } else { 0 };
@@ -108,7 +129,7 @@ fn compute_brief<const N: usize>(
 /// Precomputed samples taked un to 512 bits for BREIF point samples.
 /// The values remain consistent accross frames, because we want to achieve a similar level of entropy
 /// to best match our previous encounters with points.
-static BRIEF512_SAMPLES: Lazy<[[u32; 4]; 512]> = Lazy::new(|| {
+static BRIEF512_SAMPLES: Lazy<[[i16; 4]; 512]> = Lazy::new(|| {
     // use reproducible random numbers so that
     let mut rng = StdRng::seed_from_u64(42);
 
@@ -119,10 +140,10 @@ static BRIEF512_SAMPLES: Lazy<[[u32; 4]; 512]> = Lazy::new(|| {
     let mut samples = [[0; 4]; 512];
     for i in 0..512 {
         samples[i] = [
-            normal_dist.sample(&mut rng) as u32,
-            normal_dist.sample(&mut rng) as u32,
-            normal_dist.sample(&mut rng) as u32,
-            normal_dist.sample(&mut rng) as u32,
+            normal_dist.sample(&mut rng) as _,
+            normal_dist.sample(&mut rng) as _,
+            normal_dist.sample(&mut rng) as _,
+            normal_dist.sample(&mut rng) as _,
         ];
     }
 
