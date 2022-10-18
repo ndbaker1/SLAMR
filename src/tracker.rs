@@ -142,11 +142,6 @@ impl Tracker {
                 );
             }
 
-            // Exit early if we dont have enough matches to perform 8-point algorithm
-            if matches.len() < 8 {
-                return;
-            }
-
             // Perform Random Sampling Consensus technique to find the Essential Matrix.
             // Apply the 8-point algorithm to estimate the Fundamental Matrix, then use this estimated value for
             // Sampling Consensus in order to eliminate outlier points and isolate the most correct Essential Matrix.
@@ -157,60 +152,56 @@ impl Tracker {
             // which could perform as well or better than RANSAC.
             // https://people.inf.ethz.ch/pomarc/pubs/RaguramECCV08.pdf
 
-            let (fundamental, inliers) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
+            if let Some((fundamental, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
                 .model_inliers(&EssentialMatrixEstimator, matches.iter())
-                // UNWRAP JUSTIFICATION
-                //  We previously checked if the length of the matches set was large
-                //  enough to sample enough points to perform the 8-point algorithm,
-                //  so this function should always be able to return at least one estimate over the data
-                .unwrap();
+            {
+                // draw matches versions of features
+                // remove the outliers from the matched data set
+                // #[cfg(feature = "inliers")]
+                for (m1, m2) in inliers.into_iter().map(|i| matches[i]) {
+                    drawing::draw_hollow_circle_mut(
+                        image_buffer,
+                        (m1.keypoint.x as _, m1.keypoint.y as _),
+                        1,
+                        *RED,
+                    );
 
-            // draw matches versions of features
-            // remove the outliers from the matched data set
-            // #[cfg(feature = "inliers")]
-            for (m1, m2) in inliers.into_iter().map(|i| matches[i]) {
-                drawing::draw_hollow_circle_mut(
-                    image_buffer,
-                    (m1.keypoint.x as _, m1.keypoint.y as _),
-                    1,
-                    *RED,
-                );
+                    drawing::draw_hollow_circle_mut(
+                        image_buffer,
+                        (m2.keypoint.x as _, m2.keypoint.y as _),
+                        1,
+                        *GREEN,
+                    );
 
-                drawing::draw_hollow_circle_mut(
-                    image_buffer,
-                    (m2.keypoint.x as _, m2.keypoint.y as _),
-                    1,
-                    *GREEN,
-                );
+                    drawing::draw_line_segment_mut(
+                        image_buffer,
+                        (m1.keypoint.x as _, m1.keypoint.y as _),
+                        (m2.keypoint.x as _, m2.keypoint.y as _),
+                        *BLUE,
+                    );
 
-                drawing::draw_line_segment_mut(
-                    image_buffer,
-                    (m1.keypoint.x as _, m1.keypoint.y as _),
-                    (m2.keypoint.x as _, m2.keypoint.y as _),
-                    *BLUE,
-                );
+                    // Convert from Essential Matrix to Rt
 
-                // Convert from Essential Matrix to Rt
+                    // W = np.mat([[0,-1,0],[1,0,0],[0,0,1]],dtype=float)
+                    // U,d,Vt = np.linalg.svd(F)
+                    // if np.linalg.det(U) < 0:
+                    //     U *= -1.0
+                    // if np.linalg.det(Vt) < 0:
+                    //     Vt *= -1.0
+                    // R = np.dot(np.dot(U, W), Vt)
+                    // if np.sum(R.diagonal()) < 0:
+                    //     R = np.dot(np.dot(U, W.T), Vt)
+                    // t = U[:, 2]
 
-                // W = np.mat([[0,-1,0],[1,0,0],[0,0,1]],dtype=float)
-                // U,d,Vt = np.linalg.svd(F)
-                // if np.linalg.det(U) < 0:
-                //     U *= -1.0
-                // if np.linalg.det(Vt) < 0:
-                //     Vt *= -1.0
-                // R = np.dot(np.dot(U, W), Vt)
-                // if np.sum(R.diagonal()) < 0:
-                //     R = np.dot(np.dot(U, W.T), Vt)
-                // t = U[:, 2]
+                    // # TODO: Resolve ambiguities in better ways. This is wrong.
+                    // if t[2] < 0:
+                    //     t *= -1
 
-                // # TODO: Resolve ambiguities in better ways. This is wrong.
-                // if t[2] < 0:
-                //     t *= -1
-
-                // # TODO: UGLY!
-                // if os.getenv("REVERSE") is not None:
-                //     t *= -1
-                // return np.linalg.inv(poseRt(R, t))
+                    // # TODO: UGLY!
+                    // if os.getenv("REVERSE") is not None:
+                    //     t *= -1
+                    // return np.linalg.inv(poseRt(R, t))
+                }
             }
         }
 
