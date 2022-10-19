@@ -96,27 +96,21 @@ fn compute_brief<const N: usize>(
             //      we will always use 0 as the descriptor of the pixel in question.
             //      Remember that these are Grayscale images, where pixel values are `u8`
 
-            let first = if x1 <= image.width() as i16
-                && x1 >= 0
-                && y1 <= image.height() as i16
-                && y1 >= 0
-            {
-                // SEE UNSAFETY JUSTIFICATION ABOVE
-                unsafe { image.unsafe_get_pixel(x1 as u32, y1 as u32).0[0] }
-            } else {
-                0
-            };
+            let first =
+                if x1 < image.width() as i16 && x1 >= 0 && y1 < image.height() as i16 && y1 >= 0 {
+                    // SEE UNSAFETY JUSTIFICATION ABOVE
+                    unsafe { image.unsafe_get_pixel(x1 as u32, y1 as u32).0[0] }
+                } else {
+                    0
+                };
 
-            let second = if x2 <= image.width() as i16
-                && x2 >= 0
-                && y2 <= image.height() as i16
-                && y2 >= 0
-            {
-                // SEE UNSAFETY JUSTIFICATION ABOVE
-                unsafe { image.unsafe_get_pixel(x2 as u32, y2 as u32).0[0] }
-            } else {
-                0
-            };
+            let second =
+                if x2 < image.width() as i16 && x2 >= 0 && y2 < image.height() as i16 && y2 >= 0 {
+                    // SEE UNSAFETY JUSTIFICATION ABOVE
+                    unsafe { image.unsafe_get_pixel(x2 as u32, y2 as u32).0[0] }
+                } else {
+                    0
+                };
 
             brief_descriptor[i] += if first > second { 1 } else { 0 };
             brief_descriptor[i] <<= 1;
