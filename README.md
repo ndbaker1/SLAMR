@@ -1,7 +1,7 @@
 # SLAMR
 SLAM implementation with IMU integration written in Rust
 
-# Resources
+## Resources
 - [ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3)
 - [VINS-Mono](https://arxiv.org/pdf/1708.03852.pdf)
 - [VINS-Mobile](https://github.com/HKUST-Aerial-Robotics/VINS-Mobile)
