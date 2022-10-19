@@ -1,3 +1,5 @@
+mod algorithms;
+mod features;
 mod frame;
 mod loop_closure;
 pub mod system;

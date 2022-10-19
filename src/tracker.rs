@@ -4,12 +4,15 @@ use arrsac::Arrsac;
 use bitarray::BitArray;
 use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
 use imageproc::drawing;
-use nalgebra::{Matrix3, Matrix4, SMatrix, Vector3};
+use nalgebra::{Matrix3, SMatrix, Vector3};
 use once_cell::sync::Lazy;
 use sample_consensus::{Consensus, Estimator, Model};
 use space::{Knn, KnnFromBatch, LinearKnn, Metric};
 
-use crate::frame::{BinaryDescriptor, Feature, Frame};
+use crate::{
+    features::{BinaryDescriptor, Feature},
+    frame::Frame,
+};
 
 /// Const Generic assignement of Feature Descriptor Size
 const DESCRIPTOR_SIZE: usize = 512 / u8::BITS as usize;
@@ -152,13 +155,13 @@ impl Tracker {
             // which could perform as well or better than RANSAC.
             // https://people.inf.ethz.ch/pomarc/pubs/RaguramECCV08.pdf
 
-            if let Some((fundamental, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
+            if let Some((essential, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
                 .model_inliers(&EssentialMatrixEstimator, matches.iter())
             {
                 // draw matches versions of features
                 // remove the outliers from the matched data set
                 // #[cfg(feature = "inliers")]
-                for (m1, m2) in inliers.into_iter().map(|i| matches[i]) {
+                for (m1, m2) in inliers.iter().map(|&i| matches[i]) {
                     drawing::draw_hollow_circle_mut(
                         image_buffer,
                         (m1.keypoint.x as _, m1.keypoint.y as _),
@@ -179,61 +182,6 @@ impl Tracker {
                         (m2.keypoint.x as _, m2.keypoint.y as _),
                         *BLUE,
                     );
-
-                    // Convert from Essential Matrix to Rt
-
-                    // W = np.mat([[0,-1,0],[1,0,0],[0,0,1]],dtype=float)
-                    let matrix_w =
-                        Matrix3::<f64>::new(0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
-
-                    // U,d,Vt = np.linalg.svd(F)
-                    let svd = matrix_w.svd(true, true);
-                    let mut matrix_u = svd.u.unwrap();
-                    let mut matrix_v = svd.v_t.unwrap();
-
-                    // if np.linalg.det(U) < 0:
-                    //     U *= -1.0
-                    if matrix_u.determinant() < 0.0 {
-                        matrix_u *= -1.0;
-                    }
-
-                    // if np.linalg.det(Vt) < 0:
-                    //     Vt *= -1.0
-                    if matrix_v.determinant() < 0.0 {
-                        matrix_v *= -1.0;
-                    }
-
-                    // R = np.dot(np.dot(U, W), Vt)
-                    // if np.sum(R.diagonal()) < 0:
-                    //     R = np.dot(np.dot(U, W.T), Vt)
-                    let mut matrix_r = matrix_v * matrix_u.dot(&matrix_w);
-                    if matrix_r.diagonal().sum() < 0.0 {
-                        matrix_r = matrix_v * matrix_u.dot(&matrix_w.transpose())
-                    }
-
-                    // t = U[:, 2]
-                    // # TODO: Resolve ambiguities in better ways. This is wrong.
-                    // if t[2] < 0:
-                    //     t *= -1
-                    let mut matrix_t = matrix_u.column_mut(2);
-                    if matrix_t[2] < 0.0 {
-                        matrix_t *= -1.0;
-                    }
-
-                    // return np.linalg.inv(poseRt(R, t))
-                    // ret = np.eye(4)
-                    // ret[:3, :3] = R
-                    // ret[:3, 3] = t
-                    let mut matrix_final = Matrix4::<f64>::identity();
-                    for y in 0..3 {
-                        for x in 0..3 {
-                            matrix_final[x * 3 + y] = matrix_r[x * 3 + y];
-                        }
-                        matrix_final[y * 3 + 3] = matrix_t[y];
-                    }
-
-                    // TODO: should be invertable.
-                    // matrix_final.try_inverse().unwrap();
                 }
             }
         }
@@ -271,11 +219,37 @@ pub enum ImuMeasurment {
 
 // Implementations for `sample_consensus`
 
-pub struct FundamentalMatrix(Matrix3<f64>);
+struct EssentialMatrix<T>(Matrix3<T>);
+
+impl EssentialMatrix<f64> {
+    /// Convert from Essential Matrix to Rt (Rotation and Translation)
+    /// Reference: https://ia601408.us.archive.org/view_archive.php?archive=/7/items/DIKU-3DCV2/DIKU-3DCV2.zip&file=DIKU-3DCV2%2FHandouts%2FLecture16.pdf
+    fn extract_rt(&self) -> (Matrix3<f64>, Vector3<f64>) {
+        let matrix_w = Matrix3::new(0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+
+        // U,d,Vt = np.linalg.svd(F)
+        let svd = matrix_w.svd(true, true);
+        let matrix_u = svd.u.unwrap();
+        let matrix_v_t = svd.v_t.unwrap();
+
+        // R = U W_inv U_T
+        let mut matrix_r = matrix_u * matrix_w.transpose() * matrix_v_t;
+        // t = u_3 : U[u_1, u_2, u_3]
+        let mut matrix_t = matrix_u.column(2).clone();
+
+        if matrix_r.determinant() < 0.0 {
+            matrix_r *= -1.0;
+        }
+
+        (matrix_r, matrix_t.into())
+    }
+}
 
 type FeaturePair<'a> = (&'a SizedFeature, &'a SizedFeature);
 
-impl<'a> Model<&'a FeaturePair<'a>> for FundamentalMatrix {
+impl<'a> Model<&'a FeaturePair<'a>> for EssentialMatrix<f64> {
+    /// Computes the distance from the Feature Keypoint
+    /// to the epipolar line defined through the Funamental Matrix
     fn residual(&self, data: &&FeaturePair<'a>) -> f64 {
         let src_homogenous = Vector3::new(data.0.keypoint.x as _, data.0.keypoint.y as _, 1f64);
         let dst_homogenous = Vector3::new(data.1.keypoint.x as _, data.1.keypoint.y as _, 1f64);
@@ -295,8 +269,8 @@ struct EssentialMatrixEstimator;
 
 impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
     const MIN_SAMPLES: usize = 8;
-    type Model = FundamentalMatrix;
-    type ModelIter = std::iter::Once<FundamentalMatrix>;
+    type Model = EssentialMatrix<f64>;
+    type ModelIter = std::iter::Once<EssentialMatrix<f64>>;
 
     fn estimate<I>(&self, data: I) -> Self::ModelIter
     where
@@ -329,31 +303,28 @@ impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
         // Solve for the nullspace of the constraint matrix.
 
         // _, _, V = np.linalg.svd(A)
-        let matrix_v = matrix_a.svd(false, true).v_t.unwrap();
+        let matrix_v_t = matrix_a.svd(false, true).v_t.unwrap();
 
         // F = V[-1, :].reshape(3, 3)
-        let matrix_f = Matrix3::from_row_iterator(matrix_v.row(7).iter().copied());
+        // This is our Fundamental Matrix results
+        let matrix_f = Matrix3::from_row_iterator(matrix_v_t.row(7).iter().copied());
 
         // Enforcing the internal constraint that two singular values must be non-zero and one must be zero.
         // Create a Rank 2 matrix.
 
         // U, S, V = np.linalg.svd(F)
         let svd = matrix_f.svd(true, true);
-        let mut matrix_s = svd.singular_values;
-        let matrix_v = svd.v_t.unwrap();
+        let matrix_s = svd.singular_values;
+        let matrix_v_t = svd.v_t.unwrap();
         let matrix_u = svd.u.unwrap();
 
         // S[0] = S[1] = (S[0] + S[1]) / 2.0
         // S[2] = 0
         // self.params = U @ np.diag(S) @ V
         let mean = (matrix_s[0] + matrix_s[1]) / 2.0;
-        matrix_s[0] = mean;
-        matrix_s[1] = mean;
-        matrix_s[2] = 0.0;
-        let rank_2 =
-            matrix_u * SMatrix::from_partial_diagonal(&[matrix_s[0], matrix_s[1]]) * matrix_v;
+        let rank_2 = matrix_u * SMatrix::from_partial_diagonal(&[mean, mean]) * matrix_v_t;
 
-        std::iter::once(FundamentalMatrix(rank_2))
+        std::iter::once(EssentialMatrix(rank_2))
     }
 }
 
