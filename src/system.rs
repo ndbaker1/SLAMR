@@ -38,15 +38,5 @@ impl System {
 
 type T = f64;
 pub fn get_camera_intrinsic(f: T, w: T, h: T) -> Matrix3<T> {
-    Matrix3::new(
-        f,
-        0 as _,
-        w / 2.0,
-        0 as _,
-        f,
-        h / 2.0,
-        0 as _,
-        0 as _,
-        1 as _,
-    )
+    Matrix3::new(f, 0.0, w / 2.0, 0.0, f, h / 2.0, 0.0, 0.0, 1.0)
 }

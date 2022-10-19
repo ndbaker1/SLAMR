@@ -4,7 +4,7 @@ use arrsac::Arrsac;
 use bitarray::BitArray;
 use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
 use imageproc::drawing;
-use nalgebra::{Matrix3, SMatrix, Vector3};
+use nalgebra::{Matrix3, Matrix4, SMatrix, Vector3};
 use once_cell::sync::Lazy;
 use sample_consensus::{Consensus, Estimator, Model};
 use space::{Knn, KnnFromBatch, LinearKnn, Metric};
@@ -183,24 +183,57 @@ impl Tracker {
                     // Convert from Essential Matrix to Rt
 
                     // W = np.mat([[0,-1,0],[1,0,0],[0,0,1]],dtype=float)
+                    let matrix_w =
+                        Matrix3::<f64>::new(0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+
                     // U,d,Vt = np.linalg.svd(F)
+                    let svd = matrix_w.svd(true, true);
+                    let mut matrix_u = svd.u.unwrap();
+                    let mut matrix_v = svd.v_t.unwrap();
+
                     // if np.linalg.det(U) < 0:
                     //     U *= -1.0
+                    if matrix_u.determinant() < 0.0 {
+                        matrix_u *= -1.0;
+                    }
+
                     // if np.linalg.det(Vt) < 0:
                     //     Vt *= -1.0
+                    if matrix_v.determinant() < 0.0 {
+                        matrix_v *= -1.0;
+                    }
+
                     // R = np.dot(np.dot(U, W), Vt)
                     // if np.sum(R.diagonal()) < 0:
                     //     R = np.dot(np.dot(U, W.T), Vt)
-                    // t = U[:, 2]
+                    let mut matrix_r = matrix_v * matrix_u.dot(&matrix_w);
+                    if matrix_r.diagonal().sum() < 0.0 {
+                        matrix_r = matrix_v * matrix_u.dot(&matrix_w.transpose())
+                    }
 
+                    // t = U[:, 2]
                     // # TODO: Resolve ambiguities in better ways. This is wrong.
                     // if t[2] < 0:
                     //     t *= -1
+                    let mut matrix_t = matrix_u.column_mut(2);
+                    if matrix_t[2] < 0.0 {
+                        matrix_t *= -1.0;
+                    }
 
-                    // # TODO: UGLY!
-                    // if os.getenv("REVERSE") is not None:
-                    //     t *= -1
                     // return np.linalg.inv(poseRt(R, t))
+                    // ret = np.eye(4)
+                    // ret[:3, :3] = R
+                    // ret[:3, 3] = t
+                    let mut matrix_final = Matrix4::<f64>::identity();
+                    for y in 0..3 {
+                        for x in 0..3 {
+                            matrix_final[x * 3 + y] = matrix_r[x * 3 + y];
+                        }
+                        matrix_final[y * 3 + 3] = matrix_t[y];
+                    }
+
+                    // TODO: should be invertable.
+                    // matrix_final.try_inverse().unwrap();
                 }
             }
         }
@@ -306,13 +339,17 @@ impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
 
         // U, S, V = np.linalg.svd(F)
         let svd = matrix_f.svd(true, true);
-        let matrix_s = svd.singular_values;
+        let mut matrix_s = svd.singular_values;
         let matrix_v = svd.v_t.unwrap();
         let matrix_u = svd.u.unwrap();
 
         // S[0] = S[1] = (S[0] + S[1]) / 2.0
         // S[2] = 0
         // self.params = U @ np.diag(S) @ V
+        let mean = (matrix_s[0] + matrix_s[1]) / 2.0;
+        matrix_s[0] = mean;
+        matrix_s[1] = mean;
+        matrix_s[2] = 0.0;
         let rank_2 =
             matrix_u * SMatrix::from_partial_diagonal(&[matrix_s[0], matrix_s[1]]) * matrix_v;
 
