@@ -14,3 +14,4 @@ SLAM implementation with IMU integration written in Rust
 - [ORB: an efficient alternative to SIFT and SURF](http://www.gwylab.com/download/ORB_2012.pdf)
 - [Visual Odometry Tutorial](https://www.researchgate.net/publication/220556161_Visual_Odometry_Tutorial)
 - [The 8-point algorithm](https://www.cs.cmu.edu/~16385/s17/Slides/12.4_8Point_Algorithm.pdf)
+- [Structure from Motion](https://cmsc426.github.io/sfm/)
