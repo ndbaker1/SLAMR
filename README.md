@@ -15,3 +15,4 @@ SLAM implementation with IMU integration written in Rust
 - [Visual Odometry Tutorial](https://www.researchgate.net/publication/220556161_Visual_Odometry_Tutorial)
 - [The 8-point algorithm](https://www.cs.cmu.edu/~16385/s17/Slides/12.4_8Point_Algorithm.pdf)
 - [Structure from Motion](https://cmsc426.github.io/sfm/)
+- [Triangulation](https://www.uio.no/studier/emner/matnat/its/nedlagte-emner/UNIK4690/v16/forelesninger/lecture_7_2-triangulation.pdf)
