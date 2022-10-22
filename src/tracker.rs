@@ -4,14 +4,15 @@ use arrsac::Arrsac;
 use bitarray::BitArray;
 use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
 use imageproc::drawing;
-use nalgebra::{Matrix3, SMatrix, Vector3};
+use nalgebra::{Matrix3, SMatrix, Vector2, Vector3};
 use once_cell::sync::Lazy;
 use sample_consensus::{Consensus, Estimator, Model};
 use space::{Knn, KnnFromBatch, LinearKnn, Metric};
 
 use crate::{
+    algorithms::{disambiguate_camera_pose, triangulation::triangulate_linear},
     features::{BinaryDescriptor, Feature},
-    frame::Frame,
+    frame::{Frame, Keypoint},
 };
 
 /// Const Generic assignement of Feature Descriptor Size
@@ -36,12 +37,16 @@ pub struct Tracker {
     pub tracking_state: TrackingState,
     pub last_tracking_state: TrackingState,
     pub current_frame: Frame<SizedFeature>,
+    pub current_pose_matrix: (Vector3<f64>, Matrix3<f64>),
     pub last_frame: Option<Frame<SizedFeature>>,
 }
 
 impl Tracker {
-    /// Using the Image and Visual Odometry find Rt: the Rotation and Translation matricies.
-    pub fn get_rt_pose_change(&mut self, image_buffer: &mut ImageBuffer<Rgba<u8>, &mut [u8]>) {
+    /// Structure from Motion Pipeline used for mutliple perspectives from a single camera
+    pub fn visual_structure_from_motion(
+        &mut self,
+        image_buffer: &mut ImageBuffer<Rgba<u8>, &mut [u8]>,
+    ) {
         let grayscale_image = grayscale_with_type(image_buffer);
         let features: Vec<SizedFeature> = Feature::from_fast_and_brief(&grayscale_image);
 
@@ -155,7 +160,7 @@ impl Tracker {
             // which could perform as well or better than RANSAC.
             // https://people.inf.ethz.ch/pomarc/pubs/RaguramECCV08.pdf
 
-            if let Some((essential, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
+            if let Some((fundamental, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
                 .model_inliers(&EssentialMatrixEstimator, matches.iter())
             {
                 // draw matches versions of features
@@ -183,18 +188,72 @@ impl Tracker {
                         *BLUE,
                     );
                 }
+
+                let k = Matrix3::identity();
+                let essential = fundamental.into_essential(&k);
+                let (c_set, r_set) = essential.extract_pose_configurations();
+
+                macro_rules! triangulate_group {
+                    ($index:expr) => {
+                        triangulate_linear(
+                            &k,
+                            &self.current_pose_matrix.0,
+                            &self.current_pose_matrix.1,
+                            &c_set[$index],
+                            &r_set[$index],
+                            &inliers
+                                .iter()
+                                .map(|&k| matches[k])
+                                .map(|(feature, _)| &feature.keypoint)
+                                .map(|&Keypoint { x, y }| Vector2::new(x as f64, y as f64))
+                                .collect::<Vec<_>>(),
+                            &inliers
+                                .iter()
+                                .map(|&k| matches[k])
+                                .map(|(_, feature)| &feature.keypoint)
+                                .map(|&Keypoint { x, y }| Vector2::new(x as f64, y as f64))
+                                .collect::<Vec<_>>(),
+                        )
+                    };
+                }
+
+                let x_sets = [
+                    triangulate_group!(0),
+                    triangulate_group!(1),
+                    triangulate_group!(2),
+                    triangulate_group!(3),
+                ];
+
+                // final data for camera pose and 3D coordinates
+                let (c, r, x_set) = disambiguate_camera_pose(&c_set, &r_set, &x_sets);
+
+                // update stored pose matricies
+                self.current_pose_matrix = (c, r);
+
+                for x in x_set {
+                    println!("{},{},{}", x.x, x.y, x.z);
+                }
             }
         }
 
         self.last_frame = Some(Frame {
             features,
             ..Default::default()
-        });
+        })
     }
 
+    ///
     pub fn process_imu_measurements(&mut self, imu_measurements: &[ImuMeasurment]) {
         //
     }
+}
+
+pub type Quaternion = [f64; 4];
+pub type Vec3 = [f64; 3];
+
+pub enum ImuMeasurment {
+    OrientationQ(Quaternion),
+    Acceleration(Vec3),
 }
 
 // Implementations for `space`
@@ -209,45 +268,70 @@ impl<'f> Metric<&'f SizedFeature> for FeatureHamming {
     }
 }
 
-pub type Quaternion = [f64; 4];
-pub type Vec3 = [f64; 3];
-
-pub enum ImuMeasurment {
-    OrientationQ(Quaternion),
-    Acceleration(Vec3),
-}
-
-// Implementations for `sample_consensus`
-
 struct EssentialMatrix<T>(Matrix3<T>);
 
 impl EssentialMatrix<f64> {
     /// Convert from Essential Matrix to Rt (Rotation and Translation)
     /// Reference: https://ia601408.us.archive.org/view_archive.php?archive=/7/items/DIKU-3DCV2/DIKU-3DCV2.zip&file=DIKU-3DCV2%2FHandouts%2FLecture16.pdf
-    fn extract_rt(&self) -> (Matrix3<f64>, Vector3<f64>) {
+    fn extract_pose_configurations(&self) -> ([Vector3<f64>; 4], [Matrix3<f64>; 4]) {
         let matrix_w = Matrix3::new(0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
 
         // U,d,Vt = np.linalg.svd(F)
-        let svd = matrix_w.svd(true, true);
+        let svd = self.0.svd(true, true);
         let matrix_u = svd.u.unwrap();
         let matrix_v_t = svd.v_t.unwrap();
 
         // R = U W_inv U_T
-        let mut matrix_r = matrix_u * matrix_w.transpose() * matrix_v_t;
-        // t = u_3 : U[u_1, u_2, u_3]
-        let mut matrix_t = matrix_u.column(2).clone();
+        let rotation1 = matrix_u * matrix_w * matrix_v_t;
+        let rotation2 = matrix_u * matrix_w.transpose() * matrix_v_t;
 
-        if matrix_r.determinant() < 0.0 {
-            matrix_r *= -1.0;
-        }
+        // t = u_3 where: U[u_1, u_2, u_3]
+        let camera_t = matrix_u.column(2).clone_owned();
 
-        (matrix_r, matrix_t.into())
+        let sign1 = rotation1.determinant().signum();
+        let sign2 = rotation2.determinant().signum();
+
+        (
+            [
+                camera_t * sign1,
+                -camera_t * sign1,
+                camera_t * sign2,
+                -camera_t * sign2,
+            ],
+            [
+                rotation1 * sign1,
+                rotation1 * sign1,
+                rotation2 * sign2,
+                rotation2 * sign2,
+            ],
+        )
+    }
+}
+
+// Implementations for `sample_consensus`
+
+struct FundamentalMatrix<T>(Matrix3<T>);
+
+impl FundamentalMatrix<f64> {
+    fn into_essential(self, camera_instrinsic: &Matrix3<f64>) -> EssentialMatrix<f64> {
+        // E = K_T F K
+        let essential = camera_instrinsic.transpose() * self.0 * camera_instrinsic;
+
+        // U, S, V_T = np.linalg.svd(E)
+        let svd = essential.svd(true, true);
+        let matrix_v_t = svd.v_t.unwrap();
+        let matrix_u = svd.u.unwrap();
+
+        // Create a Rank 2 matrix to eliminate noise
+        let essentia_rank2 = matrix_u * SMatrix::from_partial_diagonal(&[1.0, 1.0]) * matrix_v_t;
+
+        EssentialMatrix(essentia_rank2)
     }
 }
 
 type FeaturePair<'a> = (&'a SizedFeature, &'a SizedFeature);
 
-impl<'a> Model<&'a FeaturePair<'a>> for EssentialMatrix<f64> {
+impl<'a> Model<&'a FeaturePair<'a>> for FundamentalMatrix<f64> {
     /// Computes the distance from the Feature Keypoint
     /// to the epipolar line defined through the Funamental Matrix
     fn residual(&self, data: &&FeaturePair<'a>) -> f64 {
@@ -269,8 +353,8 @@ struct EssentialMatrixEstimator;
 
 impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
     const MIN_SAMPLES: usize = 8;
-    type Model = EssentialMatrix<f64>;
-    type ModelIter = std::iter::Once<EssentialMatrix<f64>>;
+    type Model = FundamentalMatrix<f64>;
+    type ModelIter = std::iter::Once<FundamentalMatrix<f64>>;
 
     fn estimate<I>(&self, data: I) -> Self::ModelIter
     where
@@ -278,11 +362,12 @@ impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
     {
         // Setup homogeneous linear equation as dst' * F * src = 0.
 
-        const ROWS: usize = 8;
         const COLUMNS: usize = 9;
 
         // A = np.ones((src.shape[0], 9))
-        let mut matrix_a = SMatrix::<f64, ROWS, COLUMNS>::from_vec([1f64; ROWS * COLUMNS].to_vec());
+        let mut matrix_a = SMatrix::<f64, { Self::MIN_SAMPLES }, COLUMNS>::from_vec(
+            [1f64; Self::MIN_SAMPLES * COLUMNS].to_vec(),
+        );
 
         // A[:, :2] = src
         // A[:, :3] *= dst[:, 0, np.newaxis]
@@ -302,29 +387,17 @@ impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
 
         // Solve for the nullspace of the constraint matrix.
 
-        // _, _, V = np.linalg.svd(A)
-        let matrix_v_t = matrix_a.svd(false, true).v_t.unwrap();
+        // _, _, V_T = np.linalg.svd(A)
+        let matrix_v_t = matrix_a
+            .svd(false, true)
+            .v_t
+            .expect("could not solve transpose(V) in SVD of 8-point algorithm.");
 
         // F = V[-1, :].reshape(3, 3)
         // This is our Fundamental Matrix results
-        let matrix_f = Matrix3::from_row_iterator(matrix_v_t.row(7).iter().copied());
+        let fundamental = Matrix3::from_row_iterator(matrix_v_t.row(7).iter().copied());
 
-        // Enforcing the internal constraint that two singular values must be non-zero and one must be zero.
-        // Create a Rank 2 matrix.
-
-        // U, S, V = np.linalg.svd(F)
-        let svd = matrix_f.svd(true, true);
-        let matrix_s = svd.singular_values;
-        let matrix_v_t = svd.v_t.unwrap();
-        let matrix_u = svd.u.unwrap();
-
-        // S[0] = S[1] = (S[0] + S[1]) / 2.0
-        // S[2] = 0
-        // self.params = U @ np.diag(S) @ V
-        let mean = (matrix_s[0] + matrix_s[1]) / 2.0;
-        let rank_2 = matrix_u * SMatrix::from_partial_diagonal(&[mean, mean]) * matrix_v_t;
-
-        std::iter::once(EssentialMatrix(rank_2))
+        std::iter::once(FundamentalMatrix(fundamental))
     }
 }
 

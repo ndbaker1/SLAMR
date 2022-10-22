@@ -25,7 +25,7 @@ impl System {
         _timestamp: f64,
     ) {
         if let Some(image_buffer) = image_buffer {
-            let rt = self.tracker.get_rt_pose_change(image_buffer);
+            let rt = self.tracker.visual_structure_from_motion(image_buffer);
         }
         self.tracker.process_imu_measurements(imu_measurements);
     }
@@ -37,6 +37,16 @@ impl System {
 }
 
 type T = f64;
-pub fn get_camera_intrinsic(f: T, w: T, h: T) -> Matrix3<T> {
-    Matrix3::new(f, 0.0, w / 2.0, 0.0, f, h / 2.0, 0.0, 0.0, 1.0)
+pub fn get_camera_intrinsic(focal: T, width: T, height: T) -> Matrix3<T> {
+    Matrix3::new(
+        focal,
+        0.0,
+        width / 2.0,
+        0.0,
+        focal,
+        height / 2.0,
+        0.0,
+        0.0,
+        1.0,
+    )
 }
