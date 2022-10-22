@@ -1,10 +1,7 @@
 use image::{ImageBuffer, Luma};
 use imageproc::corners::{corners_fast9, Corner};
 
-use crate::{
-    algorithms::{self, brief::compute_descriptor},
-    frame::Keypoint,
-};
+use crate::{algorithms, frame::Keypoint};
 
 pub type BinaryDescriptor<const N: usize> = [u8; N];
 
