@@ -1,7 +1,8 @@
 use image::{ImageBuffer, Luma};
 use imageproc::corners::{corners_fast9, Corner};
+use nalgebra::Vector2;
 
-use crate::{algorithms, frame::Keypoint};
+use crate::algorithms;
 
 pub type BinaryDescriptor<const N: usize> = [u8; N];
 
@@ -9,14 +10,14 @@ pub type BinaryDescriptor<const N: usize> = [u8; N];
 /// and tries to handle a generic descriptor
 #[derive(Clone)]
 pub struct Feature<Descriptor> {
-    pub keypoint: Keypoint,
+    pub keypoint: Vector2<u32>,
     pub descriptor: Descriptor,
 }
 
 impl<const N: usize> Default for Feature<BinaryDescriptor<N>> {
     fn default() -> Self {
         Self {
-            keypoint: Keypoint::default(),
+            keypoint: Vector2::default(),
             descriptor: [0; N],
         }
     }
@@ -25,12 +26,12 @@ impl<const N: usize> Default for Feature<BinaryDescriptor<N>> {
 impl<A> Feature<A> {
     /// Uses FAST (Features from Accelerated Segment Test)
     /// as a keypoint detector for features like corners in a grayscale image
-    fn fast_keypoints(image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Keypoint> {
+    fn fast_keypoints(image: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Vec<Vector2<u32>> {
         const FAST_CORNERS_THESHOLD: u8 = 35;
 
         corners_fast9(image, FAST_CORNERS_THESHOLD)
             .into_iter()
-            .map(|Corner { x, y, .. }| Keypoint { x, y })
+            .map(|Corner { x, y, .. }| Vector2::new(x, y))
             .collect()
     }
 }

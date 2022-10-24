@@ -11,11 +11,11 @@ pub fn triangulate_linear(
 ) -> Vec<Vector3<f64>> {
     let camera_matrix1 = camera_intrinsics
         * r1
-        * Matrix3x4::from_iterator(Matrix3::identity().iter().chain((-c1).iter()).copied());
+        * Matrix3x4::from_iterator(Matrix3::identity().iter().chain(c1.iter()).copied());
 
     let camera_matrix2 = camera_intrinsics
         * r2
-        * Matrix3x4::from_iterator(Matrix3::identity().iter().chain((-c2).iter()).copied());
+        * Matrix3x4::from_iterator(Matrix3::identity().iter().chain(c2.iter()).copied());
 
     // here we are assuming that:
     // x1_set.len() == x2_set.len()
@@ -53,12 +53,13 @@ pub fn triangulate_linear(
             // V_t obtained from SVD of matrix A
             let matrix_v_t = matrix_a.svd(false, true).v_t.unwrap();
 
-            // convert from homogenous coordinated back into euclidean
-            Vector3::from_iterator(matrix_v_t.row(3).iter().cloned())
+            // convert to homogenous coordinates and back into euclidean
+            Vector3::from_iterator(matrix_v_t.row(3).iter().cloned()) / matrix_v_t.row(3)[3]
         })
         .collect()
 }
 
+#[allow(unused)] // TODO
 pub fn triangulate_nonlinear(
     camera_intrinsics: &Matrix3<f64>,
     c1: &Vector3<f64>,

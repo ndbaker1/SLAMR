@@ -1,11 +1,10 @@
 use image::{ImageBuffer, Rgba};
 use nalgebra::Matrix3;
 
-use crate::tracker::{ImuMeasurment, Tracker};
+use crate::slam::tracker::{ImuMeasurment, Tracker};
 
 #[derive(Default)]
 pub struct System {
-    pub camera_intrinsics: (Matrix3<f64>, Matrix3<f64>),
     /// KeyFrame database for place recognition (relocalization and loop detection).
     //KeyFrameDatabase* mpKeyFrameDatabase;
 
@@ -25,7 +24,7 @@ impl System {
         _timestamp: f64,
     ) {
         if let Some(image_buffer) = image_buffer {
-            let rt = self.tracker.visual_structure_from_motion(image_buffer);
+            self.tracker.visual_structure_from_motion(image_buffer);
         }
         self.tracker.process_imu_measurements(imu_measurements);
     }

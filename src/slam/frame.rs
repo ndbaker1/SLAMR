@@ -1,10 +1,3 @@
-/// Representation of a pixel point on an image
-#[derive(Clone, Default)]
-pub struct Keypoint {
-    pub x: u32,
-    pub y: u32,
-}
-
 #[derive(Default)]
 pub struct Frame<Feat> {
     pub features: Vec<Feat>,

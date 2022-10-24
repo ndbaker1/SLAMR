@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, thread::sleep, time::Duration};
 
-use crate::frame::Frame;
+use crate::slam::frame::Frame;
 
 /// Loop Closure is used to reduce sensor drift accumulation
 /// and improve the consistency of localization

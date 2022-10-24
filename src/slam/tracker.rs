@@ -4,15 +4,15 @@ use arrsac::Arrsac;
 use bitarray::BitArray;
 use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
 use imageproc::drawing;
-use nalgebra::{Matrix3, SMatrix, Vector2, Vector3};
+use nalgebra::{convert, Matrix3, RowVector3, SMatrix, Vector2, Vector3};
 use once_cell::sync::Lazy;
 use sample_consensus::{Consensus, Estimator, Model};
 use space::{Knn, KnnFromBatch, LinearKnn, Metric};
 
 use crate::{
-    algorithms::{disambiguate_camera_pose, triangulation::triangulate_linear},
-    features::{BinaryDescriptor, Feature},
-    frame::{Frame, Keypoint},
+    algorithms::{camera::disambiguate_camera_pose, triangulation::triangulate_linear},
+    slam::features::{BinaryDescriptor, Feature},
+    slam::frame::Frame,
 };
 
 /// Const Generic assignement of Feature Descriptor Size
@@ -36,9 +36,20 @@ pub enum TrackingState {
 pub struct Tracker {
     pub tracking_state: TrackingState,
     pub last_tracking_state: TrackingState,
+    /// The most recently seen frame
     pub current_frame: Frame<SizedFeature>,
-    pub current_pose_matrix: (Vector3<f64>, Matrix3<f64>),
+    /// The previous frame
     pub last_frame: Option<Frame<SizedFeature>>,
+    /// Camera Extrinsic Matrix represented by a `3x4` Matrix:
+    /// ```plain
+    /// [R -T] = R[I -T]
+    /// R: 3D Rotation Matrix
+    /// T: 3D Translation Matrix
+    /// ```
+    pub camera_extrinsic: Option<(Vector3<f64>, Matrix3<f64>)>,
+    /// Camera Intrinsic `3x3` Matrix known as `K`,
+    /// which is made up of a 2D Translation, 2D Scaling, and 2D Shear
+    pub camera_intrinsic: Matrix3<f64>,
 }
 
 impl Tracker {
@@ -82,13 +93,14 @@ impl Tracker {
             let data = features.iter().map(|f| (f, 1u8)).collect::<Vec<_>>();
             let search: LinearKnn<FeatureHamming, _> = KnnFromBatch::from_batch(data.iter());
 
-            let matches = if features.len() > 1 {
-                // enforce that each point maps to only one
-                let mut seen_current = HashSet::<usize>::new();
-                let mut seen_last = HashSet::<usize>::new();
+            let matches = match features.len() {
+                1.. => {
+                    // enforce that each point maps to only one
+                    let mut seen_current = HashSet::<usize>::new();
+                    let mut seen_last = HashSet::<usize>::new();
 
-                // Find the mappings from the last frame onto the current frame using kNN (K Nearest Neighbor).
-                last_frame
+                    // Find the mappings from the last frame onto the current frame using kNN (K Nearest Neighbor).
+                    last_frame
                     .features
                     .iter()
                     .enumerate()
@@ -120,8 +132,8 @@ impl Tracker {
                         }
                     })
                     .collect()
-            } else {
-                Vec::new()
+                }
+                _ => Vec::new(),
             };
 
             #[cfg(feature = "matched")]
@@ -189,29 +201,28 @@ impl Tracker {
                     );
                 }
 
-                let k = Matrix3::identity();
-                let essential = fundamental.into_essential(&k);
+                let essential = fundamental.into_essential(&self.camera_intrinsic);
                 let (c_set, r_set) = essential.extract_pose_configurations();
 
                 macro_rules! triangulate_group {
                     ($index:expr) => {
                         triangulate_linear(
-                            &k,
-                            &self.current_pose_matrix.0,
-                            &self.current_pose_matrix.1,
+                            &self.camera_intrinsic,
+                            &self.camera_extrinsic.unwrap_or_default().0,
+                            &self.camera_extrinsic.unwrap_or_default().1,
                             &c_set[$index],
                             &r_set[$index],
                             &inliers
                                 .iter()
                                 .map(|&k| matches[k])
                                 .map(|(feature, _)| &feature.keypoint)
-                                .map(|&Keypoint { x, y }| Vector2::new(x as f64, y as f64))
+                                .map(|kp| Vector2::new(kp.x as f64, kp.y as f64))
                                 .collect::<Vec<_>>(),
                             &inliers
                                 .iter()
                                 .map(|&k| matches[k])
                                 .map(|(_, feature)| &feature.keypoint)
-                                .map(|&Keypoint { x, y }| Vector2::new(x as f64, y as f64))
+                                .map(|kp| Vector2::new(kp.x as f64, kp.y as f64))
                                 .collect::<Vec<_>>(),
                         )
                     };
@@ -228,10 +239,18 @@ impl Tracker {
                 let (c, r, x_set) = disambiguate_camera_pose(&c_set, &r_set, &x_sets);
 
                 // update stored pose matricies
-                self.current_pose_matrix = (c, r);
+                if let None = self.camera_extrinsic {
+                    self.camera_extrinsic = Some((c, r));
+                }
 
                 for x in x_set {
-                    println!("{},{},{}", x.x, x.y, x.z);
+                    drawing::draw_hollow_circle_mut(
+                        image_buffer,
+                        // changing the dimentions back to normal. WIP
+                        ((x.x * 150.0) as _, (x.y * 150.0) as _),
+                        2,
+                        *PURPLE,
+                    );
                 }
             }
         }
@@ -274,14 +293,18 @@ impl EssentialMatrix<f64> {
     /// Convert from Essential Matrix to Rt (Rotation and Translation)
     /// Reference: https://ia601408.us.archive.org/view_archive.php?archive=/7/items/DIKU-3DCV2/DIKU-3DCV2.zip&file=DIKU-3DCV2%2FHandouts%2FLecture16.pdf
     fn extract_pose_configurations(&self) -> ([Vector3<f64>; 4], [Matrix3<f64>; 4]) {
-        let matrix_w = Matrix3::new(0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+        let matrix_w = Matrix3::from_rows(&[
+            RowVector3::new(0.0, -1.0, 0.0),
+            RowVector3::new(1.0, 0.0, 0.0),
+            RowVector3::new(0.0, 0.0, 1.0),
+        ]);
 
         // U,d,Vt = np.linalg.svd(F)
         let svd = self.0.svd(true, true);
         let matrix_u = svd.u.unwrap();
         let matrix_v_t = svd.v_t.unwrap();
 
-        // R = U W_inv U_T
+        // R = U W_inv V_T
         let rotation1 = matrix_u * matrix_w * matrix_v_t;
         let rotation2 = matrix_u * matrix_w.transpose() * matrix_v_t;
 
@@ -313,9 +336,11 @@ impl EssentialMatrix<f64> {
 struct FundamentalMatrix<T>(Matrix3<T>);
 
 impl FundamentalMatrix<f64> {
+    /// ### Assumptions
+    /// 1. The camera intrinsic matrix for both point correspondences since it is the same camera.
     fn into_essential(self, camera_instrinsic: &Matrix3<f64>) -> EssentialMatrix<f64> {
         // E = K_T F K
-        let essential = camera_instrinsic.transpose() * self.0 * camera_instrinsic;
+        let essential = camera_instrinsic.try_inverse().unwrap() * self.0 * camera_instrinsic;
 
         // U, S, V_T = np.linalg.svd(E)
         let svd = essential.svd(true, true);
@@ -323,9 +348,9 @@ impl FundamentalMatrix<f64> {
         let matrix_u = svd.u.unwrap();
 
         // Create a Rank 2 matrix to eliminate noise
-        let essentia_rank2 = matrix_u * SMatrix::from_partial_diagonal(&[1.0, 1.0]) * matrix_v_t;
+        let essential_rank2 = matrix_u * SMatrix::from_partial_diagonal(&[1.0, 1.0]) * matrix_v_t;
 
-        EssentialMatrix(essentia_rank2)
+        EssentialMatrix(essential_rank2)
     }
 }
 
@@ -375,14 +400,18 @@ impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
         // A[:, 3:6] *= dst[:, 1, np.newaxis]
         // A[:, 6:8] = src
         for (i, (src, dst)) in data.enumerate() {
-            matrix_a[i * COLUMNS + 0] = (dst.keypoint.x * src.keypoint.x) as _;
-            matrix_a[i * COLUMNS + 1] = (dst.keypoint.x * src.keypoint.y) as _;
-            matrix_a[i * COLUMNS + 2] = dst.keypoint.x as _;
-            matrix_a[i * COLUMNS + 3] = (dst.keypoint.y * src.keypoint.x) as _;
-            matrix_a[i * COLUMNS + 4] = (dst.keypoint.y * src.keypoint.y) as _;
-            matrix_a[i * COLUMNS + 5] = dst.keypoint.y as _;
-            matrix_a[i * COLUMNS + 6] = src.keypoint.x as _;
-            matrix_a[i * COLUMNS + 7] = src.keypoint.y as _;
+            // normalize the points
+            let x1: Vector2<f64> = convert(src.keypoint);
+            let x2: Vector2<f64> = convert(dst.keypoint);
+
+            matrix_a[i * COLUMNS + 0] = x2.x * x1.x;
+            matrix_a[i * COLUMNS + 1] = x2.x * x1.y;
+            matrix_a[i * COLUMNS + 2] = x2.x;
+            matrix_a[i * COLUMNS + 3] = x2.y * x1.x;
+            matrix_a[i * COLUMNS + 4] = x2.y * x1.y;
+            matrix_a[i * COLUMNS + 5] = x2.y;
+            matrix_a[i * COLUMNS + 6] = x1.x;
+            matrix_a[i * COLUMNS + 7] = x1.y;
         }
 
         // Solve for the nullspace of the constraint matrix.
@@ -394,7 +423,8 @@ impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
             .expect("could not solve transpose(V) in SVD of 8-point algorithm.");
 
         // F = V[-1, :].reshape(3, 3)
-        // This is our Fundamental Matrix results
+        // The nullsapce is equal to the last column of V, which is the bottom row in V_t
+        // This is our Fundamental Matrix result
         let fundamental = Matrix3::from_row_iterator(matrix_v_t.row(7).iter().copied());
 
         std::iter::once(FundamentalMatrix(fundamental))
@@ -407,3 +437,5 @@ static RED: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[255, 0, 0, 255]));
 static BLUE: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 0, 255, 255]));
 //#[cfg(feature = "color")]
 static GREEN: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 255, 0, 255]));
+//#[cfg(feature = "color")]
+static PURPLE: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[255, 0, 255, 255]));

@@ -17,3 +17,4 @@ SLAM implementation with IMU integration written in Rust
 - [Structure from Motion](https://cmsc426.github.io/sfm/)
 - [Triangulation](https://www.uio.no/studier/emner/matnat/its/nedlagte-emner/UNIK4690/v16/forelesninger/lecture_7_2-triangulation.pdf)
 - [Camera Matrix](https://en.wikipedia.org/wiki/Camera_resectioning)
+- [Dissection the Camera Matrix](https://ksimek.github.io/2013/08/13/intrinsic/)
