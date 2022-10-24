@@ -1,4 +1,4 @@
-mod features;
+mod feature;
 mod frame;
 mod loop_closure;
 pub mod system;

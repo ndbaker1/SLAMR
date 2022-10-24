@@ -15,7 +15,7 @@ use crate::{
         camera::disambiguate_camera_pose,
         triangulation::triangulate_linear,
     },
-    slam::features::Feature,
+    slam::feature::Feature,
     slam::frame::Frame,
 };
 

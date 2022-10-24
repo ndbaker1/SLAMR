@@ -1,5 +1,7 @@
 # SLAMR
-SLAM implementation with IMU integration written in Rust
+>Work in Progress
+
+📐 Odometry modules written in Rust
 
 ## Resources
 - [ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3)
