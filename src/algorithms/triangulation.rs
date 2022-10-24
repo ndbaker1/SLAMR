@@ -6,8 +6,8 @@ pub fn triangulate_linear(
     r1: &Matrix3<f64>,
     c2: &Vector3<f64>,
     r2: &Matrix3<f64>,
-    x1_set: &Vec<Vector2<f64>>,
-    x2_set: &Vec<Vector2<f64>>,
+    x1_set: &[Vector2<f64>],
+    x2_set: &[Vector2<f64>],
 ) -> Vec<Vector3<f64>> {
     let camera_matrix1 = camera_intrinsics
         * r1

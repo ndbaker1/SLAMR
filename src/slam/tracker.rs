@@ -10,8 +10,12 @@ use sample_consensus::{Consensus, Estimator, Model};
 use space::{Knn, KnnFromBatch, LinearKnn, Metric};
 
 use crate::{
-    algorithms::{camera::disambiguate_camera_pose, triangulation::triangulate_linear},
-    slam::features::{BinaryDescriptor, Feature},
+    algorithms::{
+        brief::{features_using_fast, BinaryDescriptor},
+        camera::disambiguate_camera_pose,
+        triangulation::triangulate_linear,
+    },
+    slam::features::Feature,
     slam::frame::Frame,
 };
 
@@ -59,7 +63,13 @@ impl Tracker {
         image_buffer: &mut ImageBuffer<Rgba<u8>, &mut [u8]>,
     ) {
         let grayscale_image = grayscale_with_type(image_buffer);
-        let features: Vec<SizedFeature> = Feature::from_fast_and_brief(&grayscale_image);
+        let features: Vec<SizedFeature> = features_using_fast(&grayscale_image)
+            .into_iter()
+            .map(|(descriptor, keypoint)| SizedFeature {
+                descriptor,
+                keypoint,
+            })
+            .collect();
 
         if let Some(last_frame) = &self.last_frame {
             // draw raw features
@@ -239,7 +249,7 @@ impl Tracker {
                 let (c, r, x_set) = disambiguate_camera_pose(&c_set, &r_set, &x_sets);
 
                 // update stored pose matricies
-                if let None = self.camera_extrinsic {
+                if self.camera_extrinsic.is_none() {
                     self.camera_extrinsic = Some((c, r));
                 }
 
@@ -404,14 +414,15 @@ impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
             let x1: Vector2<f64> = convert(src.keypoint);
             let x2: Vector2<f64> = convert(dst.keypoint);
 
-            matrix_a[i * COLUMNS + 0] = x2.x * x1.x;
-            matrix_a[i * COLUMNS + 1] = x2.x * x1.y;
-            matrix_a[i * COLUMNS + 2] = x2.x;
-            matrix_a[i * COLUMNS + 3] = x2.y * x1.x;
-            matrix_a[i * COLUMNS + 4] = x2.y * x1.y;
-            matrix_a[i * COLUMNS + 5] = x2.y;
-            matrix_a[i * COLUMNS + 6] = x1.x;
-            matrix_a[i * COLUMNS + 7] = x1.y;
+            let row = i * COLUMNS;
+            matrix_a[row + 0] = x2.x * x1.x;
+            matrix_a[row + 1] = x2.x * x1.y;
+            matrix_a[row + 2] = x2.x;
+            matrix_a[row + 3] = x2.y * x1.x;
+            matrix_a[row + 4] = x2.y * x1.y;
+            matrix_a[row + 5] = x2.y;
+            matrix_a[row + 6] = x1.x;
+            matrix_a[row + 7] = x1.y;
         }
 
         // Solve for the nullspace of the constraint matrix.

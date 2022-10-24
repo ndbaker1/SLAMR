@@ -5,13 +5,13 @@ type CorrectPoseWithEstimation<'a> = (Vector3<f64>, Matrix3<f64>, &'a Vec<Vector
 
 const NUM_CONFIGURATIONS: usize = 4;
 
-/// Determines which Camera Pose is correct by evaluating the Cheirality Condition,
-/// which is defined where the transformed point remains in front of the camera.
+/// Determines which Camera Pose is correct by evaluating the [Cheirality Condition](http://users.cecs.anu.edu.au/~hartley/Papers/cheiral/revision/cheiral.pdf),
+/// which is defined as when the transformed point lies in front of the camera.
 ///
-/// Verify that the initial point has a Z-value greater than 0, i.e. in front of the camera,
+/// Verify that the initial point has a Z-value greater than `0`, i.e. in front of the camera,
 /// and then the same for the translated and rotated point (only about the Z-axis once again)
 ///
-/// X_3 > 0 (first camera) and r_3(X − C) > 0 (second camera)
+/// `X_3 > 0` (first camera) and `r_3(X − C) > 0` (transformation to second camera)
 pub fn disambiguate_camera_pose<'a>(
     c_set: &[Vector3<f64>; NUM_CONFIGURATIONS],
     r_set: &[Matrix3<f64>; NUM_CONFIGURATIONS],
