@@ -1,11 +1,8 @@
 use std::collections::HashSet;
 
 use arrsac::Arrsac;
-use bitarray::BitArray;
-use image::{imageops::grayscale_with_type, ImageBuffer, Pixel, Rgba};
-use imageproc::drawing;
+use image::{imageops::grayscale_with_type, ImageBuffer, Rgba};
 use nalgebra::{convert, Matrix3, RowVector3, SMatrix, Vector2, Vector3};
-use once_cell::sync::Lazy;
 use sample_consensus::{Consensus, Estimator, Model};
 use space::{Knn, KnnFromBatch, LinearKnn, Metric};
 
@@ -19,9 +16,17 @@ use crate::{
     slam::frame::Frame,
 };
 
+pub type Quaternion = [f64; 4];
+pub type Vec3 = [f64; 3];
+
+pub enum ImuMeasurment {
+    OrientationQ(Quaternion),
+    Acceleration(Vec3),
+}
+
 /// Const Generic assignement of Feature Descriptor Size
 const DESCRIPTOR_SIZE: usize = 512 / u8::BITS as usize;
-type SizedFeature = Feature<BinaryDescriptor<DESCRIPTOR_SIZE>>;
+pub type SizedFeature = Feature<BinaryDescriptor<DESCRIPTOR_SIZE>>;
 
 /// Tracking states
 #[derive(Default)]
@@ -60,117 +65,12 @@ impl Tracker {
     /// Structure from Motion Pipeline used for mutliple perspectives from a single camera
     pub fn visual_structure_from_motion(
         &mut self,
-        image_buffer: &mut ImageBuffer<Rgba<u8>, &mut [u8]>,
+        image_buffer: &mut ImageBuffer<Rgba<u8>, &[u8]>,
     ) {
-        let grayscale_image = grayscale_with_type(image_buffer);
-        let features: Vec<SizedFeature> = features_using_fast(&grayscale_image)
-            .into_iter()
-            .map(|(descriptor, keypoint)| SizedFeature {
-                descriptor,
-                keypoint,
-            })
-            .collect();
+        let features = Self::extract_features(image_buffer);
 
         if let Some(last_frame) = &self.last_frame {
-            // draw raw features
-            #[cfg(feature = "featues")]
-            {
-                for Feature { keypoint, .. } in &last_frame.features {
-                    drawing::draw_hollow_circle_mut(
-                        image_buffer,
-                        // draw the keypoint onto the image
-                        (keypoint.x as _, keypoint.y as _),
-                        // draw everything as a dot
-                        1,
-                        *RED,
-                    );
-                }
-
-                for Feature { keypoint, .. } in &features {
-                    drawing::draw_hollow_circle_mut(
-                        image_buffer,
-                        // draw the keypoint onto the image
-                        (keypoint.x as _, keypoint.y as _),
-                        // draw everything as a dot
-                        1,
-                        *GREEN,
-                    );
-                }
-            }
-
-            // Prepare feature data to perform kNN matching
-            // TODO: I dont like this requirement on owned memory. find a different implementation or write one.
-            let data = features.iter().map(|f| (f, 1u8)).collect::<Vec<_>>();
-            let search: LinearKnn<FeatureHamming, _> = KnnFromBatch::from_batch(data.iter());
-
-            let matches = match features.len() {
-                1.. => {
-                    // enforce that each point maps to only one
-                    let mut seen_current = HashSet::<usize>::new();
-                    let mut seen_last = HashSet::<usize>::new();
-
-                    // Find the mappings from the last frame onto the current frame using kNN (K Nearest Neighbor).
-                    last_frame
-                    .features
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, feature)| {
-                        // find k = 2 nearest neighbors and then perform Lowe's test to filter out answers potentiall chosen by noise
-                        // https://stackoverflow.com/questions/51197091/how-does-the-lowes-ratio-test-work
-                        let nearest = search.knn(&feature, 2);
-
-                        // this value is kind of high, but it wont give that many points if i make it any lower ಥ_ಥ
-                        const LOWE_RATIO: f32 = 0.75;
-                        // scale the threshold with the size of the descriptor?
-                        const DISTANCE_THRESHOLD: u32 = DESCRIPTOR_SIZE as _;
-
-                        // filter the results to have tolerable hamming distances
-                        if nearest.iter().any(|q| q.0.distance < DISTANCE_THRESHOLD)
-                        // then apply Lowe's ratio test 
-                        && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
-                        // check that this point has not already been assigned a correspondence
-                        && !seen_current.contains(&nearest[0].0.index)
-                        && !seen_last.contains(&i)
-                        {
-                            // record correspondence
-                            seen_current.insert(nearest[0].0.index);
-                            seen_last.insert(i);
-
-                            Some((feature, *nearest[0].1))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-                }
-                _ => Vec::new(),
-            };
-
-            #[cfg(feature = "matched")]
-            for &(m1, m2) in &matches {
-                // draw matches versions of features
-                drawing::draw_hollow_circle_mut(
-                    image_buffer,
-                    (m1.keypoint.x as _, m1.keypoint.y as _),
-                    1,
-                    *RED,
-                );
-
-                drawing::draw_hollow_circle_mut(
-                    image_buffer,
-                    (m2.keypoint.x as _, m2.keypoint.y as _),
-                    1,
-                    *GREEN,
-                );
-
-                // draw line connecting past to present features
-                drawing::draw_line_segment_mut(
-                    image_buffer,
-                    (m1.keypoint.x as _, m1.keypoint.y as _),
-                    (m2.keypoint.x as _, m2.keypoint.y as _),
-                    *BLUE,
-                );
-            }
+            let matches = Self::match_features_knn(&features, &last_frame.features);
 
             // Perform Random Sampling Consensus technique to find the Essential Matrix.
             // Apply the 8-point algorithm to estimate the Fundamental Matrix, then use this estimated value for
@@ -185,32 +85,6 @@ impl Tracker {
             if let Some((fundamental, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
                 .model_inliers(&EssentialMatrixEstimator, matches.iter())
             {
-                // draw matches versions of features
-                // remove the outliers from the matched data set
-                // #[cfg(feature = "inliers")]
-                for (m1, m2) in inliers.iter().map(|&i| matches[i]) {
-                    drawing::draw_hollow_circle_mut(
-                        image_buffer,
-                        (m1.keypoint.x as _, m1.keypoint.y as _),
-                        1,
-                        *RED,
-                    );
-
-                    drawing::draw_hollow_circle_mut(
-                        image_buffer,
-                        (m2.keypoint.x as _, m2.keypoint.y as _),
-                        1,
-                        *GREEN,
-                    );
-
-                    drawing::draw_line_segment_mut(
-                        image_buffer,
-                        (m1.keypoint.x as _, m1.keypoint.y as _),
-                        (m2.keypoint.x as _, m2.keypoint.y as _),
-                        *BLUE,
-                    );
-                }
-
                 let essential = fundamental.into_essential(&self.camera_intrinsic);
                 let (c_set, r_set) = essential.extract_pose_configurations();
 
@@ -238,29 +112,21 @@ impl Tracker {
                     };
                 }
 
-                let x_sets = [
-                    triangulate_group!(0),
-                    triangulate_group!(1),
-                    triangulate_group!(2),
-                    triangulate_group!(3),
-                ];
-
                 // final data for camera pose and 3D coordinates
-                let (c, r, x_set) = disambiguate_camera_pose(&c_set, &r_set, &x_sets);
+                let (c, r, x_set) = disambiguate_camera_pose(
+                    &c_set,
+                    &r_set,
+                    &[
+                        triangulate_group!(0),
+                        triangulate_group!(1),
+                        triangulate_group!(2),
+                        triangulate_group!(3),
+                    ],
+                );
 
                 // update stored pose matricies
                 if self.camera_extrinsic.is_none() {
                     self.camera_extrinsic = Some((c, r));
-                }
-
-                for x in x_set {
-                    drawing::draw_hollow_circle_mut(
-                        image_buffer,
-                        // changing the dimentions back to normal. WIP
-                        ((x.x * 150.0) as _, (x.y * 150.0) as _),
-                        2,
-                        *PURPLE,
-                    );
                 }
             }
         }
@@ -271,29 +137,87 @@ impl Tracker {
         })
     }
 
+    /// Extract BRIEF features from images
+    pub fn extract_features(image_buffer: &ImageBuffer<Rgba<u8>, &[u8]>) -> Vec<SizedFeature> {
+        let grayscale_image = grayscale_with_type(image_buffer);
+        features_using_fast(&grayscale_image)
+            .into_iter()
+            .map(|(descriptor, keypoint)| SizedFeature {
+                descriptor,
+                keypoint,
+            })
+            .collect()
+    }
+
+    /// Finds correspondences between two feature sets, and returns references to their pairs
+    pub fn match_features_knn<'a>(
+        features1: &'a Vec<SizedFeature>,
+        features2: &'a Vec<SizedFeature>,
+    ) -> Vec<(&'a SizedFeature, &'a SizedFeature)> {
+        // Implementations for `space`
+
+        use bitarray::BitArray;
+
+        #[derive(Default)]
+        struct FeatureHamming;
+
+        impl<'f> Metric<&'f SizedFeature> for FeatureHamming {
+            type Unit = u32;
+            fn distance(&self, a: &&SizedFeature, b: &&SizedFeature) -> Self::Unit {
+                BitArray::new(a.descriptor).distance(&BitArray::new(b.descriptor))
+            }
+        }
+
+        // Prepare feature data to perform kNN matching
+        let data: Vec<_> = features1.iter().map(|f| (f, 1u8)).collect();
+
+        let search: LinearKnn<FeatureHamming, _> = KnnFromBatch::from_batch(data.iter());
+
+        if features1.is_empty() {
+            Vec::new()
+        } else {
+            // enforce that each point maps to only one
+            let mut seen_current = HashSet::<usize>::new();
+            let mut seen_last = HashSet::<usize>::new();
+
+            // Find the mappings from the last frame onto the current frame using kNN (K Nearest Neighbor).
+            features2
+                .iter()
+                .enumerate()
+                .filter_map(|(i, feature)| {
+                    // find k = 2 nearest neighbors and then perform Lowe's test to filter out answers potentiall chosen by noise
+                    // https://stackoverflow.com/questions/51197091/how-does-the-lowes-ratio-test-work
+                    let nearest = search.knn(&feature, 2);
+
+                    // this value is kind of high, but it wont give that many points if i make it any lower ಥ_ಥ
+                    const LOWE_RATIO: f32 = 0.75;
+                    // scale the threshold with the size of the descriptor?
+                    const DISTANCE_THRESHOLD: u32 = DESCRIPTOR_SIZE as _;
+
+                    // filter the results to have tolerable hamming distances
+                    if nearest.iter().any(|q| q.0.distance < DISTANCE_THRESHOLD)
+                // then apply Lowe's ratio test 
+                && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
+                // check that this point has not already been assigned a correspondence
+                && !seen_current.contains(&nearest[0].0.index)
+                && !seen_last.contains(&i)
+                    {
+                        // record correspondence
+                        seen_current.insert(nearest[0].0.index);
+                        seen_last.insert(i);
+
+                        Some((feature, *nearest[0].1))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+    }
+
     ///
     pub fn process_imu_measurements(&mut self, imu_measurements: &[ImuMeasurment]) {
         //
-    }
-}
-
-pub type Quaternion = [f64; 4];
-pub type Vec3 = [f64; 3];
-
-pub enum ImuMeasurment {
-    OrientationQ(Quaternion),
-    Acceleration(Vec3),
-}
-
-// Implementations for `space`
-
-#[derive(Default)]
-struct FeatureHamming;
-
-impl<'f> Metric<&'f SizedFeature> for FeatureHamming {
-    type Unit = u32;
-    fn distance(&self, a: &&SizedFeature, b: &&SizedFeature) -> Self::Unit {
-        BitArray::new(a.descriptor).distance(&BitArray::new(b.descriptor))
     }
 }
 
@@ -441,12 +365,3 @@ impl<'a> Estimator<&'a FeaturePair<'a>> for EssentialMatrixEstimator {
         std::iter::once(FundamentalMatrix(fundamental))
     }
 }
-
-//#[cfg(feature = "color")]
-static RED: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[255, 0, 0, 255]));
-//#[cfg(feature = "color")]
-static BLUE: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 0, 255, 255]));
-//#[cfg(feature = "color")]
-static GREEN: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[0, 255, 0, 255]));
-//#[cfg(feature = "color")]
-static PURPLE: Lazy<Rgba<u8>> = Lazy::new(|| *Rgba::from_slice(&[255, 0, 255, 255]));
