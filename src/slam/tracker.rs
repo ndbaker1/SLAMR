@@ -72,19 +72,7 @@ impl Tracker {
         if let Some(last_frame) = &self.last_frame {
             let matches = Self::match_features_knn(&features, &last_frame.features);
 
-            // Perform Random Sampling Consensus technique to find the Essential Matrix.
-            // Apply the 8-point algorithm to estimate the Fundamental Matrix, then use this estimated value for
-            // Sampling Consensus in order to eliminate outlier points and isolate the most correct Essential Matrix.
-            // The Essential Matrix will contain the Rotation and Translation from the previous frame to the next.
-            const INLIER_THRESHOLD: f64 = 1.8;
-
-            // This is an ARRSAC (Adaptive Real-Time Random Sample Consensus) package,
-            // which could perform as well or better than RANSAC.
-            // https://people.inf.ethz.ch/pomarc/pubs/RaguramECCV08.pdf
-
-            if let Some((fundamental, inliers)) = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng())
-                .model_inliers(&EssentialMatrixEstimator, matches.iter())
-            {
+            if let Some((fundamental, inliers)) = Self::sample_consensus_fundamental(&matches) {
                 let essential = fundamental.into_essential(&self.camera_intrinsic);
                 let (c_set, r_set) = essential.extract_pose_configurations();
 
@@ -215,13 +203,31 @@ impl Tracker {
         }
     }
 
+    /// Perform Random Sampling Consensus technique to find the Essential Matrix.
+    ///
+    /// Apply the 8-point algorithm to estimate the Fundamental Matrix, then use this estimated value for
+    /// Sampling Consensus in order to eliminate outlier points and isolate the most correct Essential Matrix.
+    /// The Essential Matrix will contain the Rotation and Translation from the previous frame to the next.
+    pub fn sample_consensus_fundamental(
+        matches: &Vec<(&SizedFeature, &SizedFeature)>,
+    ) -> Option<(FundamentalMatrix<f64>, Vec<usize>)> {
+        // This is an ARRSAC (Adaptive Real-Time Random Sample Consensus) package,
+        // which could perform as well or better than RANSAC.
+        // https://people.inf.ethz.ch/pomarc/pubs/RaguramECCV08.pdf
+        const INLIER_THRESHOLD: f64 = 1.8;
+
+        let mut arrsac = Arrsac::new(INLIER_THRESHOLD, rand::thread_rng());
+
+        arrsac.model_inliers(&EssentialMatrixEstimator, matches.iter())
+    }
+
     ///
     pub fn process_imu_measurements(&mut self, imu_measurements: &[ImuMeasurment]) {
         //
     }
 }
 
-struct EssentialMatrix<T>(Matrix3<T>);
+pub struct EssentialMatrix<T>(Matrix3<T>);
 
 impl EssentialMatrix<f64> {
     /// Convert from Essential Matrix to Rt (Rotation and Translation)
@@ -267,7 +273,7 @@ impl EssentialMatrix<f64> {
 
 // Implementations for `sample_consensus`
 
-struct FundamentalMatrix<T>(Matrix3<T>);
+pub struct FundamentalMatrix<T>(Matrix3<T>);
 
 impl FundamentalMatrix<f64> {
     /// ### Assumptions
