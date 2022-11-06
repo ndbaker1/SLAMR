@@ -142,6 +142,12 @@ impl Tracker {
         features1: &'a Vec<SizedFeature>,
         features2: &'a Vec<SizedFeature>,
     ) -> Vec<(&'a SizedFeature, &'a SizedFeature)> {
+        // short circuit when either feature vector is too short
+        const MIN_FEATURES: usize = 10;
+        if features1.len() < MIN_FEATURES || features2.len() < MIN_FEATURES {
+            return Vec::new();
+        }
+
         // Implementations for `space`
 
         use bitarray::BitArray;
@@ -184,11 +190,11 @@ impl Tracker {
 
                     // filter the results to have tolerable hamming distances
                     if nearest.iter().any(|q| q.0.distance < DISTANCE_THRESHOLD)
-                // then apply Lowe's ratio test 
-                && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
-                // check that this point has not already been assigned a correspondence
-                && !seen_current.contains(&nearest[0].0.index)
-                && !seen_last.contains(&i)
+                    // then apply Lowe's ratio test 
+                    && nearest[0].0.distance < (LOWE_RATIO * nearest[1].0.distance as f32) as u32
+                    // check that this point has not already been assigned a correspondence
+                    && !seen_current.contains(&nearest[0].0.index)
+                    && !seen_last.contains(&i)
                     {
                         // record correspondence
                         seen_current.insert(nearest[0].0.index);
